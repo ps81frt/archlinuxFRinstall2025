@@ -113,7 +113,7 @@ EDITOR=vim visudo
         wheel ALL=(ALL) NOPASSWD: ALL
         %wheel ALL=(ALL) ALL
 
-   # su - thinkpad
+   # su - cyber
 xdg-user-dirs-update
 mkdir Sources
 cd Sources
