@@ -12,8 +12,7 @@ lsblk
     # /dev/sda3 root partition (50G).
     # /dev/sda4 home partition (100G).
     # /dev/sda5 data partition (remaining disk space).
-
-    #  gdisk /dev/sda
+gdisk /dev/sda
     #  
     #  Nettoyage de la table de partition
     #     Command: O
