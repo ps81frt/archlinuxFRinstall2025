@@ -282,6 +282,7 @@ Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 - [Arch Linux](https://archlinux.org/) pour cette distribution exceptionnelle
 - La communauté Arch pour la documentation
+- [Arch Linux FR Forums](https://forums.archlinux.fr) pour l'entraide francophone
 - Les contributeurs de ce projet
 
 ## 📞 Support
