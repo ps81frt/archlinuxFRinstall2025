@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.2-corrected
+# Version: 2025.20-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -835,51 +835,52 @@ mount_partitions() {
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
-    local boot_part="${DISK}1"
-    local swap_part="${DISK}2"
-    local root_part="${DISK}3"
-    local home_part=""
-    local data_part=""
-
-    [[ -f /tmp/boot_part ]] && boot_part=$(cat /tmp/boot_part)
-    [[ -f /tmp/swap_part ]] && swap_part=$(cat /tmp/swap_part)
-    [[ -f /tmp/root_part ]] && root_part=$(cat /tmp/root_part)
-    [[ -f /tmp/home_part ]] && home_part=$(cat /tmp/home_part)
-    [[ -f /tmp/data_part ]] && data_part=$(cat /tmp/data_part)
-
     log "Mode de boot : $boot_mode"
     log "Partition /home séparée : $has_separate_home"
 
-    # Création des points de montage obligatoires
-    mkdir -p /mnt/boot /mnt/home /mnt/data
+    # Monter root
+    log "Montage root ${DISK}3 sur /mnt..."
+    mount "${DISK}3" /mnt || error_exit "Échec montage root"
 
-    # Montage root
-    log "Montage root $root_part sur /mnt..."
-    mount "$root_part" /mnt || error_exit "Échec montage root"
+    # Activer swap
+    log "Activation swap ${DISK}2..."
+    swapon "${DISK}2" || error_exit "Échec activation swap"
 
-    # Activation swap
-    log "Activation swap $swap_part..."
-    swapon "$swap_part" || error_exit "Échec activation swap"
+    # Création de tous les points de montage nécessaires AVANT montage
+    mkdir -p /mnt/boot
+    mkdir -p /mnt/home
+    mkdir -p /mnt/data
 
     # Montage boot
-    log "Montage boot $boot_part sur /mnt/boot..."
-    mount "$boot_part" /mnt/boot || error_exit "Échec montage boot"
+    log "Montage boot ${DISK}1 sur /mnt/boot..."
+    mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
 
-    if [[ $has_separate_home == "true" ]]; then
-        log "Montage home $home_part sur /mnt/home..."
-        mount "$home_part" /mnt/home || error_exit "Échec montage home"
+    # Montage home et data selon configuration et mode boot
+    if [[ "$has_separate_home" == "true" ]]; then
+        if [[ "$boot_mode" == "bios" ]]; then
+            # BIOS avec home séparé: partitions logiques
+            log "Montage home ${DISK}5 sur /mnt/home..."
+            mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
 
-        log "Montage data $data_part sur /mnt/data..."
-        mount "$data_part" /mnt/data || error_exit "Échec montage data"
+            log "Montage data ${DISK}6 sur /mnt/data..."
+            mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
+        else
+            # UEFI avec home séparé
+            log "Montage home ${DISK}4 sur /mnt/home..."
+            mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
+
+            log "Montage data ${DISK}5 sur /mnt/data..."
+            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
+        fi
     else
-        log "Montage data $data_part sur /mnt/data..."
-        mount "$data_part" /mnt/data || error_exit "Échec montage data"
+        # Sans home séparée
+        log "Montage data ${DISK}4 sur /mnt/data..."
+        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
     fi
 
-    log "Montage terminé"
+    log "Montage terminé."
     lsblk
 }
-
 
 
 
