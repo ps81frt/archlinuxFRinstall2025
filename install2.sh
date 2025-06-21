@@ -841,23 +841,19 @@ main() {
     log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
 
-    detect_boot_mode
-    check_prerequisites
-    auto_partition
-    partition_uefi
-    partition_bios
-    manual_partition
-    partition_menu
-    prepare_disk_for_format
-    format_partitions
-    mount_partitions
-    install_base
-    configure_system
-    install_gui
-    setup_user
-    cleanup
-    create_post_install_script
+    # Ces fonctions s'exécutent dans l'ordre pour tout le monde :
+    check_prerequisites          # Vérification internet, disque, etc.
+    partition_menu              # Affichage du menu et gestion du choix utilisateur
+    prepare_disk_for_format     # Préparation du disque pour formatage
+    format_partitions           # Formatage des partitions
+    mount_partitions            # Montage des partitions
+    install_base                # Installation du système de base
+    configure_system            # Configuration des paramètres système
+    install_gui                 # Installation de l'environnement graphique
+    setup_user                  # Création du compte utilisateur
+    create_post_install_script  # Création du script post-installation
 
+    # Message final et nettoyage
     log "=== INSTALLATION TERMINEE ==="
     echo ""
     echo "=============================================================="
@@ -883,7 +879,6 @@ main() {
         log "Redémarrage annulé. N'oubliez pas de redémarrer manuellement."
     fi
 }
-
 # Point d'entrée du script, compatible Bash et Zsh
 if [[ -n "$ZSH_VERSION" ]]; then
     # Zsh : on vérifie le contexte pour ne pas lancer si script est "sourcé"
