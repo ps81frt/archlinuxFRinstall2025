@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.1-corrected
+# Version: 2025.2-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -835,33 +835,25 @@ mount_partitions() {
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
-    # Récupérer les partitions si elles existent (pour option 3)
     local boot_part="${DISK}1"
     local swap_part="${DISK}2"
     local root_part="${DISK}3"
     local home_part=""
     local data_part=""
 
-    if [[ -f /tmp/boot_part ]]; then
-        boot_part=$(cat /tmp/boot_part)
-    fi
-    if [[ -f /tmp/swap_part ]]; then
-        swap_part=$(cat /tmp/swap_part)
-    fi
-    if [[ -f /tmp/root_part ]]; then
-        root_part=$(cat /tmp/root_part)
-    fi
-    if [[ -f /tmp/home_part ]]; then
-        home_part=$(cat /tmp/home_part)
-    fi
-    if [[ -f /tmp/data_part ]]; then
-        data_part=$(cat /tmp/data_part)
-    fi
+    [[ -f /tmp/boot_part ]] && boot_part=$(cat /tmp/boot_part)
+    [[ -f /tmp/swap_part ]] && swap_part=$(cat /tmp/swap_part)
+    [[ -f /tmp/root_part ]] && root_part=$(cat /tmp/root_part)
+    [[ -f /tmp/home_part ]] && home_part=$(cat /tmp/home_part)
+    [[ -f /tmp/data_part ]] && data_part=$(cat /tmp/data_part)
 
     log "Mode de boot : $boot_mode"
     log "Partition /home séparée : $has_separate_home"
 
-    # Montage root en premier
+    # Création des points de montage obligatoires
+    mkdir -p /mnt/boot /mnt/home /mnt/data
+
+    # Montage root
     log "Montage root $root_part sur /mnt..."
     mount "$root_part" /mnt || error_exit "Échec montage root"
 
@@ -869,23 +861,17 @@ mount_partitions() {
     log "Activation swap $swap_part..."
     swapon "$swap_part" || error_exit "Échec activation swap"
 
-    # Création des points de montage
-    mkdir -p /mnt/boot /mnt/data
-
     # Montage boot
     log "Montage boot $boot_part sur /mnt/boot..."
     mount "$boot_part" /mnt/boot || error_exit "Échec montage boot"
 
     if [[ $has_separate_home == "true" ]]; then
-        mkdir -p /mnt/home
-
         log "Montage home $home_part sur /mnt/home..."
         mount "$home_part" /mnt/home || error_exit "Échec montage home"
 
         log "Montage data $data_part sur /mnt/data..."
         mount "$data_part" /mnt/data || error_exit "Échec montage data"
     else
-        # Sans home séparée
         log "Montage data $data_part sur /mnt/data..."
         mount "$data_part" /mnt/data || error_exit "Échec montage data"
     fi
@@ -893,6 +879,7 @@ mount_partitions() {
     log "Montage terminé"
     lsblk
 }
+
 
 
 
