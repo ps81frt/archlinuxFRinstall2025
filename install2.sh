@@ -4,6 +4,8 @@
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
 # Version: 2025.1-corrected
+# Auteur : itdevops
+# Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
 # Compatible UEFI et Legacy BIOS - Corrections apportées
 # =============================================================================
