@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.22-corrected
+# Version: 2025.20-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -51,32 +51,68 @@ detect_boot_mode() {
     fi
     log "Boot mode detected: $BOOT_MODE"
 }
-
-# Fonction de vérification des prérequis
-check_prerequisites() {
-    log "=== VERIFICATION DES PREREQUIS ==="
+# Détection automatique du disque principal - CORRIGÉE
+detect_main_disk() {
+    log "=== DÉTECTION DU DISQUE PRINCIPAL ==="
     
-    # Vérification connexion internet
-    if ! ping -c 1 8.8.8.8 &> /dev/null; then
-        error_exit "Pas de connexion internet détectée"
+    # Liste des disques disponibles
+    local disks=($(lsblk -dn -o NAME,SIZE,TYPE | grep "disk" | awk '{print "/dev/"$1}'))
+    
+    if [[ ${#disks[@]} -eq 0 ]]; then
+        error_exit "Aucun disque détecté"
+    elif [[ ${#disks[@]} -eq 1 ]]; then
+        DISK="${disks[0]}"
+        log_success "Disque unique détecté: $DISK"
+    else
+        log "Plusieurs disques détectés:"
+        lsblk -dn -o NAME,SIZE,TYPE | grep "disk" | nl
+        echo ""
+        read -p "Choisissez le numéro du disque à utiliser: " choice
+        
+        if [[ $choice -ge 1 && $choice -le ${#disks[@]} ]]; then
+            DISK="${disks[$((choice-1))]}"
+            log_success "Disque sélectionné: $DISK"
+        else
+            error_exit "Choix invalide"
+        fi
     fi
-    log_success "Connexion internet OK"
-    
-    # Détection du mode de boot
-    detect_boot_mode
-    log_success "Mode $BOOT_MODE détecté"
     
     # Vérification existence du disque
     if [[ ! -b "$DISK" ]]; then
         error_exit "Disque $DISK non trouvé"
     fi
-    log_success "Disque $DISK détecté"
-    
-    # Configuration clavier français
-    loadkeys fr
-    log_success "Clavier français configuré"
 }
 
+# Fonction de vérification des prérequis
+# Fonction de vérification des prérequis - CORRIGÉE
+check_prerequisites() {
+    log "=== VERIFICATION DES PREREQUIS ==="
+    
+    # Vérification des droits root
+    if [[ $EUID -ne 0 ]]; then
+        error_exit "Ce script doit être exécuté en tant que root"
+    fi
+    
+    # Vérification connexion internet avec timeout
+    log "Vérification de la connexion internet..."
+    if ! timeout 10 ping -c 3 8.8.8.8 &> /dev/null; then
+        log_warning "Test avec 8.8.8.8 échoué, test avec 1.1.1.1..."
+        if ! timeout 10 ping -c 3 1.1.1.1 &> /dev/null; then
+            error_exit "Pas de connexion internet détectée"
+        fi
+    fi
+    log_success "Connexion internet OK"
+    
+    # Détection du mode de boot
+    detect_boot_mode
+    
+    # Détection automatique du disque
+    detect_main_disk
+    
+    # Configuration clavier français
+    loadkeys fr || log_warning "Impossible de charger le clavier français"
+    log_success "Configuration des prérequis terminée"
+}
 # Fonction de partitionnement automatique avec détection de taille
 auto_partition() {
     local disk=$1
@@ -151,49 +187,54 @@ auto_partition() {
 }
 
 # Partitionnement UEFI (GPT) - CORRIGÉ
+# Partitionnement UEFI (GPT) - CORRIGÉ
 partition_uefi() {
-    local disk=$1
-    local boot_size=$2
-    local swap_size=$3
-    local root_size=$4
-    local home_size=$5
-    local has_separate_home=$6
-
-    log "Partitionnement UEFI sur $disk"
-
-    # Nettoyage des partitions existantes
-    parted "$disk" --script mklabel gpt
-
-    # Crée EFI
-    parted "$disk" --script mkpart ESP fat32 1MiB "$boot_size"
-    parted "$disk" --script set 1 boot on
-    mkfs.fat -F32 "${disk}1"
-
-    # Crée swap
-    parted "$disk" --script mkpart primary linux-swap "$boot_size" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))"
-    mkswap "${disk}2"
-
-    # Crée root
-    parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))"
-    mkfs.ext4 "${disk}3"
-
-    if [[ $has_separate_home == true ]]; then
-        # Crée home
-        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))"
-        mkfs.ext4 "${disk}4"
-
-        # Crée data (reste)
-        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))" 100%
-        mkfs.ext4 "${disk}5"
+    local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
+    
+    log "Partitionnement UEFI/GPT sur $disk..."
+    
+    # Nettoyage complet du disque
+    wipefs -af "$disk" || true
+    sgdisk --zap-all "$disk" || error_exit "Échec du nettoyage du disque"
+    
+    # Attendre que les changements soient pris en compte
+    sleep 5
+    partprobe "$disk" 2>/dev/null || true
+    
+    # Création des partitions avec sgdisk
+    if [[ $has_separate_home == false ]]; then
+        # Configuration sans partition home séparée (4 partitions)
+        log "Création des partitions (sans /home séparé)..."
+        sgdisk --clear \
+               --new=1:0:+$boot_size --typecode=1:ef00 --change-name=1:'EFI System' \
+               --new=2:0:+$swap_size --typecode=2:8200 --change-name=2:'Linux swap' \
+               --new=3:0:+$root_size --typecode=3:8304 --change-name=3:'Linux root' \
+               --new=4:0:0 --typecode=4:8300 --change-name=4:'Linux data' \
+               "$disk" || error_exit "Échec de la création des partitions"
     else
-        # Pas de home séparée: data = reste après root
-        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" 100%
-        mkfs.ext4 "${disk}4"
+        # Configuration complète avec partition home (5 partitions)
+        log "Création des partitions (avec /home séparé)..."
+        sgdisk --clear \
+               --new=1:0:+$boot_size --typecode=1:ef00 --change-name=1:'EFI System' \
+               --new=2:0:+$swap_size --typecode=2:8200 --change-name=2:'Linux swap' \
+               --new=3:0:+$root_size --typecode=3:8304 --change-name=3:'Linux root' \
+               --new=4:0:+$home_size --typecode=4:8302 --change-name=4:'Linux home' \
+               --new=5:0:0 --typecode=5:8300 --change-name=5:'Linux data' \
+               "$disk" || error_exit "Échec de la création des partitions"
     fi
-
-    log "Partitionnement UEFI terminé"
+    
+    # Attendre et forcer la reconnaissance des partitions
+    sleep 5
+    partprobe "$disk" 2>/dev/null || true
+    udevadm settle
+    
+    # Vérifier que les partitions ont été créées
+    if ! lsblk "$disk" | grep -q "${disk##*/}1"; then
+        error_exit "Les partitions n'ont pas été créées correctement"
+    fi
+    
+    log_success "Partitions UEFI créées avec succès"
 }
-
 
 # Partitionnement BIOS (MBR) - CORRIGÉ
 partition_bios() {
@@ -244,127 +285,99 @@ partition_bios() {
 
 
 # Fonction de partitionnement manuel - CORRIGÉE
-manual_partition() {
-    local disk=$1
+# Partitionnement BIOS (MBR) - CORRIGÉ
+partition_bios() {
+    local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
     
-    log "=== PARTITIONNEMENT MANUEL ($BOOT_MODE) ==="
+    log "Partitionnement BIOS/MBR sur $disk..."
     
-    if [[ $BOOT_MODE == "uefi" ]]; then
-        cat << EOF
-Partitionnement manuel UEFI de $disk avec gdisk
-Suivez ces étapes dans gdisk:
+    # Nettoyage complet du disque
+    wipefs -af "$disk" || true
+    dd if=/dev/zero of="$disk" bs=512 count=2048 2>/dev/null || true
+    
+    sleep 3
+    
+    # Simplification: toujours utiliser 4 partitions primaires max
+    if [[ $has_separate_home == false ]]; then
+        # Configuration sans partition home séparée (4 partitions primaires)
+        log "Création des partitions MBR (sans /home séparé)..."
+        cat << EOF | fdisk "$disk"
+o
+n
+p
+1
 
-1. Nettoyage de la table de partition:
-   Command: o
-   Confirm: Y
++$boot_size
+a
+n
+p
+2
 
-2. EFI partition (boot) - 512M:
-   Command: n
-   Partition number: ENTER (1)
-   First sector: ENTER
-   Last sector: +512M
-   Hex code: EF00
++$swap_size
+n
+p
+3
 
-3. SWAP partition - 4G:
-   Command: n
-   Partition number: ENTER (2)
-   First sector: ENTER
-   Last sector: +4G
-   Hex code: 8200
++$root_size
+n
+p
 
-4. Root partition (/) - 50G:
-   Command: n
-   Partition number: ENTER (3)
-   First sector: ENTER
-   Last sector: +50G
-   Hex code: 8304
 
-5. Home partition - 100G:
-   Command: n
-   Partition number: ENTER (4)
-   First sector: ENTER
-   Last sector: +100G
-   Hex code: 8302
-
-6. Data partition - reste du disque:
-   Command: n
-   Partition number: ENTER (5)
-   First sector: ENTER
-   Last sector: ENTER
-   Hex code: ENTER (8300)
-
-7. Sauvegarde et quitte:
-   Command: w
-   Confirm: Y
-
+t
+2
+82
+w
 EOF
-        read -p "Appuyez sur Entrée pour lancer gdisk..."
-        gdisk "$disk"
     else
-        cat << EOF
-Partitionnement manuel BIOS de $disk avec fdisk
-Suivez ces étapes dans fdisk:
+        # Configuration avec home - utilisation d'une partition étendue
+        log "Création des partitions MBR (avec /home séparé)..."
+        cat << EOF | fdisk "$disk"
+o
+n
+p
+1
 
-1. Créer une nouvelle table de partition DOS:
-   Command: o
++$boot_size
+a
+n
+p
+2
 
-2. Boot partition - 512M:
-   Command: n
-   Partition type: p
-   Partition number: ENTER (1)
-   First sector: ENTER
-   Last sector: +512M
-   
-   Marquer comme bootable:
-   Command: a
-   Partition number: 1
++$swap_size
+n
+p
+3
 
-3. SWAP partition - 4G:
-   Command: n
-   Partition type: p
-   Partition number: ENTER (2)
-   First sector: ENTER
-   Last sector: +4G
-   
-   Changer le type:
-   Command: t
-   Partition number: 2
-   Hex code: 82
++$root_size
+n
+e
 
-4. Root partition (/) - 50G:
-   Command: n
-   Partition type: p
-   Partition number: ENTER (3)
-   First sector: ENTER
-   Last sector: +50G
 
-5. Extended partition - reste du disque:
-   Command: n
-   Partition type: e
-   Partition number: ENTER (4)
-   First sector: ENTER
-   Last sector: ENTER
+n
 
-6. Home partition logique - 100G:
-   Command: n
-   First sector: ENTER
-   Last sector: +100G
++$home_size
+n
 
-7. Data partition logique - reste:
-   Command: n
-   First sector: ENTER
-   Last sector: ENTER
 
-8. Sauvegarder:
-   Command: w
 
+t
+2
+82
+w
 EOF
-        read -p "Appuyez sur Entrée pour lancer fdisk..."
-        fdisk "$disk"
     fi
     
-    echo "true" > /tmp/has_separate_home
-    echo "$BOOT_MODE" > /tmp/boot_mode
+    # Attendre et forcer la reconnaissance des partitions
+    sleep 5
+    partprobe "$disk" 2>/dev/null || true
+    udevadm settle
+    
+    # Vérifier que les partitions ont été créées
+    if ! lsblk "$disk" | grep -q "${disk##*/}1"; then
+        error_exit "Les partitions n'ont pas été créées correctement"
+    fi
+    
+    log_success "Partitions BIOS créées avec succès"
 }
 
 # Menu de choix du partitionnement
@@ -708,166 +721,224 @@ prepare_disk_for_format() {
 }
 
 # Formatage des partitions - CORRIGÉ
+# Formatage des partitions - CORRIGÉ
 format_partitions() {
-    log "=== FORMATAGE & MONTAGE DES PARTITIONS ==="
+    log "=== FORMATAGE DES PARTITIONS ==="
 
+    local has_separate_home="true"
+    local boot_mode="$BOOT_MODE"
+
+    # Lecture config temporaire si disponible
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
-    log "Mode boot: $boot_mode, home séparée: $has_separate_home"
+    log "Mode de boot : $boot_mode"
+    log "Partition /home séparée : $has_separate_home"
+    log "Disque utilisé : $DISK"
 
-    # EFI ou /boot (sda1)
+    # Attendre que les partitions soient reconnues
+    sleep 3
+    udevadm settle
+
+    # Fonction helper pour attendre qu'une partition existe
+    wait_for_partition() {
+        local part=$1
+        local count=0
+        while [[ ! -b "$part" && $count -lt 30 ]]; do
+            sleep 1
+            ((count++))
+        done
+        if [[ ! -b "$part" ]]; then
+            error_exit "Partition $part non trouvée après 30 secondes"
+        fi
+    }
+
+    # Formatage partition de démarrage selon mode
+    wait_for_partition "${DISK}1"
     if [[ $boot_mode == "uefi" ]]; then
-        if [[ -b ${DISK}1 ]]; then
-            log "Formatage EFI ${DISK}1 en FAT32"
-            mkfs.fat -F32 "${DISK}1" || error_exit "Échec formatage EFI"
-            mount "${DISK}1" /mnt/boot
-        else
-            log_warning "${DISK}1 non existante — EFI non formatée/montee"
-        fi
+        log "Formatage de la partition EFI ${DISK}1..."
+        mkfs.fat -F32 -n "EFI" "${DISK}1" || error_exit "Échec formatage EFI"
     else
-        if [[ -b ${DISK}1 ]]; then
-            log "Formatage /boot ${DISK}1 en ext4"
-            mkfs.ext4 -F "${DISK}1" || error_exit "Échec formatage /boot"
-            mount "${DISK}1" /mnt/boot
-        else
-            log_warning "${DISK}1 non existante — /boot non formaté/monté"
-        fi
+        log "Formatage de la partition /boot ${DISK}1..."
+        mkfs.ext4 -F -L "BOOT" "${DISK}1" || error_exit "Échec formatage /boot"
     fi
 
-    # Swap (sda2)
-    if [[ -b ${DISK}2 ]]; then
-        log "Activation swap ${DISK}2"
-        mkswap "${DISK}2" || error_exit "Échec swap"
-        swapon "${DISK}2"
-    else
-        log_warning "${DISK}2 non trouvée — swap ignoré"
-    fi
+    # Swap
+    wait_for_partition "${DISK}2"
+    log "Configuration du swap ${DISK}2..."
+    mkswap -L "SWAP" "${DISK}2" || error_exit "Échec configuration swap"
 
-    # Root (sda3)
-    if [[ -b ${DISK}3 ]]; then
-        log "Formatage root ${DISK}3"
-        mkfs.ext4 -F "${DISK}3" || error_exit "Échec root"
-        mount "${DISK}3" /mnt
-    else
-        error_exit "Partition root ${DISK}3 est obligatoire" 
-    fi
+    # Root
+    wait_for_partition "${DISK}3"
+    log "Formatage de la partition root ${DISK}3..."
+    mkfs.ext4 -F -L "ROOT" "${DISK}3" || error_exit "Échec formatage root"
 
-    # Home / Data
+    # Home et data selon configuration
     if [[ $has_separate_home == "true" ]]; then
         if [[ $boot_mode == "bios" ]]; then
-            # BIOS + home séparé: loisirs sda5 et sda6
-            if [[ -b ${DISK}5 ]]; then
-                log "Formatage home ${DISK}5"
-                mkfs.ext4 -F "${DISK}5" || error_exit "Échec home"
-                mount "${DISK}5" /mnt/home
-            else
-                log_warning "Partition home ${DISK}5 non trouvée"
-            fi
-            if [[ -b ${DISK}6 ]]; then
-                log "Formatage data ${DISK}6"
-                mkfs.ext4 -F "${DISK}6" || error_exit "Échec data"
-                mount "${DISK}6" /mnt/data || log_warning "Montage data ${DISK}6 échoué"
-            else
-                log_warning "Partition data ${DISK}6 non trouvée"
-            fi
+            # En BIOS avec home séparé: partitions logiques
+            wait_for_partition "${DISK}5"
+            log "Formatage home ${DISK}5..."
+            mkfs.ext4 -F -L "HOME" "${DISK}5" || error_exit "Échec formatage home"
+
+            wait_for_partition "${DISK}6"
+            log "Formatage data ${DISK}6..."
+            mkfs.ext4 -F -L "DATA" "${DISK}6" || error_exit "Échec formatage data"
         else
-            # UEFI + home séparé: sda4 et sda5
-            if [[ -b ${DISK}4 ]]; then
-                log "Formatage home ${DISK}4"
-                mkfs.ext4 -F "${DISK}4" || error_exit "Échec home"
-                mount "${DISK}4" /mnt/home
-            else
-                log_warning "Partition home ${DISK}4 non trouvée"
-            fi
-            if [[ -b ${DISK}5 ]]; then
-                log "Formatage data ${DISK}5"
-                mkfs.ext4 -F "${DISK}5" || error_exit "Échec data"
-                mount "${DISK}5" /mnt/data || log_warning "Montage data ${DISK}5 échoué"
-            else
-                log_warning "Partition data ${DISK}5 non trouvée"
-            fi
+            # En UEFI avec home séparé: partitions 4 et 5
+            wait_for_partition "${DISK}4"
+            log "Formatage home ${DISK}4..."
+            mkfs.ext4 -F -L "HOME" "${DISK}4" || error_exit "Échec formatage home"
+
+            wait_for_partition "${DISK}5"
+            log "Formatage data ${DISK}5..."
+            mkfs.ext4 -F -L "DATA" "${DISK}5" || error_exit "Échec formatage data"
         fi
     else
-        # Pas de home séparé: data = sda4
-        if [[ -b ${DISK}4 ]]; then
-            log "Formatage data ${DISK}4"
-            mkfs.ext4 -F "${DISK}4" || error_exit "Échec data"
-            mount "${DISK}4" /mnt/data
-        else
-            log_warning "Partition data ${DISK}4 non trouvée"
-        fi
+        # Sans home séparée
+        wait_for_partition "${DISK}4"
+        log "Formatage data ${DISK}4 (pas de home séparé)..."
+        mkfs.ext4 -F -L "DATA" "${DISK}4" || error_exit "Échec formatage data"
     fi
 
-    log_success "Formatage et montage terminés"
+    log_success "Formatage terminé"
 }
-
+# Montage des partitions - CORRIGÉ
 # Montage des partitions - CORRIGÉ
 mount_partitions() {
     log "=== MONTAGE DES PARTITIONS ==="
 
-    local has_separate_home=$(cat /tmp/has_separate_home)
-    local boot_mode=$(cat /tmp/boot_mode)
+    local has_separate_home="true"
+    local boot_mode="$BOOT_MODE"
 
-    # Monte root
+    [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
+    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
+
+    log "Mode de boot : $boot_mode"
+    log "Partition /home séparée : $has_separate_home"
+
+    # Démonter tout ce qui pourrait être monté
+    umount -R /mnt 2>/dev/null || true
+
+    # Montage root en premier
+    log "Montage root ${DISK}3 sur /mnt..."
     mount "${DISK}3" /mnt || error_exit "Échec montage root"
 
-    # Active swap
+    # Activation swap
+    log "Activation swap ${DISK}2..."
     swapon "${DISK}2" || error_exit "Échec activation swap"
 
-    # Création des points de montage
-    mkdir -p /mnt/boot
-    mkdir -p /mnt/data
+    # Création des points de montage nécessaires
+    mkdir -p /mnt/{boot,data}
 
-    # Monte boot
+    # Montage boot
+    log "Montage boot ${DISK}1 sur /mnt/boot..."
     mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
 
-    # Monte home et data selon le mode
-    if [[ "$has_separate_home" == "true" ]]; then
+    # Montage home et data selon configuration
+    if [[ $has_separate_home == "true" ]]; then
         mkdir -p /mnt/home
-        if [[ "$boot_mode" == "bios" ]]; then
+
+        if [[ $boot_mode == "bios" ]]; then
+            # BIOS avec home séparé: partitions logiques
+            log "Montage home ${DISK}5 sur /mnt/home..."
             mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
+
+            log "Montage data ${DISK}6 sur /mnt/data..."
             mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
         else
+            # UEFI avec home séparé
+            log "Montage home ${DISK}4 sur /mnt/home..."
             mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
+
+            log "Montage data ${DISK}5 sur /mnt/data..."
             mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
         fi
     else
-        if [[ "$boot_mode" == "bios" ]]; then
-            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
-        else
-            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
-        fi
+        # Sans home séparée
+        log "Montage data ${DISK}4 sur /mnt/data..."
+        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
     fi
 
-    log "Montage terminé"
-    lsblk
+    log_success "Montage terminé"
+    log "État des montages:"
+    lsblk | grep -E "(NAME|${DISK##*/})"
 }
 
 
 
 
 # Installation de base
+# Installation de base - CORRIGÉE
+# Installation de base - CORRIGÉE
 install_base() {
     log "=== INSTALLATION DE BASE ==="
     
     # Synchronisation de l'horloge
     log "Synchronisation de l'horloge..."
     timedatectl set-ntp true
+    sleep 2
     
-    # Mise à jour des miroirs
-    log "Mise à jour des miroirs..."
-    reflector --country France --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+    # Mise à jour des miroirs avec gestion d'erreur
+    log "Mise à jour des miroirs pour la France..."
+    if command -v reflector &> /dev/null; then
+        reflector --country France --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || {
+            log_warning "Reflector a échoué, utilisation des miroirs par défaut"
+        }
+    else
+        log_warning "Reflector non disponible, installation..."
+        pacman -Sy --noconfirm reflector || log_warning "Impossible d'installer reflector"
+        reflector --country France --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || {
+            log_warning "Reflector a échoué, utilisation des miroirs par défaut"
+        }
+    fi
     
-    # Installation des paquets de base
+    # Mise à jour de la base de données des paquets
+    log "Mise à jour de la base de données pacman..."
+    pacman -Sy || error_exit "Échec de la mise à jour de pacman"
+    
+    # Installation des paquets de base avec gestion d'erreur
     log "Installation des paquets de base..."
-    pacstrap /mnt base base-devel linux linux-firmware vim openssh intel-ucode || error_exit "Échec installation base"
+    local base_packages="base base-devel linux linux-firmware vim openssh"
     
-    # Génération du fstab
+    # Détection du processeur pour le microcode
+    if lscpu | grep -qi intel; then
+        base_packages="$base_packages intel-ucode"
+        log "Processeur Intel détecté, ajout d'intel-ucode"
+    elif lscpu | grep -qi amd; then
+        base_packages="$base_packages amd-ucode"
+        log "Processeur AMD détecté, ajout d'amd-ucode"
+    fi
+    
+    # Installation avec retry en cas d'échec
+    local retry_count=0
+    while [[ $retry_count -lt 3 ]]; do
+        if pacstrap /mnt $base_packages; then
+            break
+        else
+            ((retry_count++))
+            log_warning "Échec de l'installation (tentative $retry_count/3), nouvelle tentative..."
+            sleep 5
+        fi
+    done
+    
+    if [[ $retry_count -eq 3 ]]; then
+        error_exit "Échec de l'installation de base après 3 tentatives"
+    fi
+    
+    # Génération du fstab avec vérification
     log "Génération du fstab..."
-    genfstab -U /mnt >> /mnt/etc/fstab || error_exit "Échec génération fstab"
+    genfstab -U /mnt > /mnt/etc/fstab || error_exit "Échec génération fstab"
     
-    log "Installation de base terminée"
+    # Vérification du fstab généré
+    if [[ ! -s /mnt/etc/fstab ]]; then
+        error_exit "Le fichier fstab est vide"
+    fi
+    
+    log "Contenu du fstab généré:"
+    cat /mnt/etc/fstab
+    
+    log_success "Installation de base terminée"
 }
 
 # Configuration système dans chroot - CORRIGÉE
@@ -1015,57 +1086,99 @@ CHROOT_EOF
 }
 
 # Installation environnement graphique
+# Installation environnement graphique - CORRIGÉE
 install_gui() {
     log "=== INSTALLATION ENVIRONNEMENT GRAPHIQUE ==="
     
     arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
-    
-    # Installation serveur X
-    pacman -S --noconfirm xorg-server xorg-apps xorg-xinit
-    
-    # Installation i3
-    pacman -S --noconfirm i3-gaps i3blocks i3lock numlockx
-    
-    # Installation gestionnaire de connexion
-    pacman -S --noconfirm lightdm lightdm-gtk-greeter
-    systemctl enable lightdm
-    
-    # Installation polices
-    pacman -S --noconfirm noto-fonts ttf-ubuntu-font-family ttf-dejavu ttf-freefont
-    pacman -S --noconfirm ttf-liberation ttf-droid ttf-roboto terminus-font
-    
-    # Applications de base
-    pacman -S --noconfirm rxvt-unicode ranger rofi dmenu firefox vlc
-    
-    # Thèmes
-    pacman -S --noconfirm lxappearance arc-gtk-theme papirus-icon-theme
-    
-    # Configuration thème lightdm
+set -e
+
+echo "Installation de l'environnement graphique..."
+
+# Installation serveur X avec gestion d'erreur
+echo "Installation du serveur X..."
+if ! pacman -S --noconfirm xorg-server xorg-apps xorg-xinit; then
+    echo "Erreur: Échec installation serveur X"
+    exit 1
+fi
+
+# Installation i3 window manager
+echo "Installation de i3..."
+if ! pacman -S --noconfirm i3-wm i3blocks i3lock i3status numlockx; then
+    echo "Attention: Installation partielle de i3"
+fi
+
+# Installation gestionnaire de connexion
+echo "Installation du gestionnaire de connexion..."
+if pacman -S --noconfirm lightdm lightdm-gtk-greeter; then
+    systemctl enable lightdm.service || echo "Attention: lightdm pas activé"
+else
+    echo "Attention: Échec installation lightdm"
+fi
+
+# Installation polices essentielles
+echo "Installation des polices..."
+local font_packages="ttf-dejavu ttf-liberation noto-fonts"
+pacman -S --noconfirm $font_packages || echo "Attention: Polices partiellement installées"
+
+# Applications de base
+echo "Installation des applications de base..."
+local base_apps="firefox konsole ranger rofi dmenu"
+pacman -S --noconfirm $base_apps || echo "Attention: Applications partiellement installées"
+
+# Lecteur multimédia
+pacman -S --noconfirm vlc || echo "Attention: VLC non installé"
+
+# Thèmes et apparence
+echo "Installation des thèmes..."
+local theme_packages="lxappearance arc-gtk-theme papirus-icon-theme"
+pacman -S --noconfirm $theme_packages || echo "Attention: Thèmes partiellement installés"
+
+# Configuration thème lightdm si installé
+if [[ -f /etc/lightdm/lightdm-gtk-greeter.conf ]]; then
     cat > /etc/lightdm/lightdm-gtk-greeter.conf << EOF
 [greeter]
 theme-name = Arc-Dark
 icon-theme-name = Papirus-Dark
-background = #2f343
+background = #2f343f
 EOF
-    
-    # Gestion de l'alimentation et optimisations
-    pacman -S --noconfirm tlp tlp-rdw powertop acpi acpi_call
-    systemctl enable tlp
-    systemctl enable tlp-sleep
-    systemctl mask systemd-rfkill.service
-    systemctl mask systemd-rfkill.socket
-    
-    # Bluetooth
-    pacman -S --noconfirm bluez bluez-utils blueman
-    systemctl enable bluetooth
-    
-    # Optimisation SSD
-    systemctl enable fstrim.timer
-    
+fi
+
+# Gestion de l'alimentation et optimisations
+echo "Installation des outils de gestion d'énergie..."
+local power_packages="tlp powertop acpi"
+if pacman -S --noconfirm $power_packages; then
+    systemctl enable tlp.service || echo "Attention: TLP pas activé"
+    systemctl mask systemd-rfkill.service systemd-rfkill.socket || true
+fi
+
+# Bluetooth
+echo "Installation du support Bluetooth..."
+local bluetooth_packages="bluez bluez-utils"
+if pacman -S --noconfirm $bluetooth_packages; then
+    systemctl enable bluetooth.service || echo "Attention: Bluetooth pas activé"
+fi
+
+# Support audio avancé
+echo "Installation du support audio..."
+pacman -S --noconfirm pavucontrol || echo "Attention: pavucontrol non installé"
+
+# Optimisation SSD
+echo "Activation du trim automatique..."
+systemctl enable fstrim.timer || echo "Attention: fstrim.timer pas activé"
+
+echo "Installation GUI terminée"
+
 CHROOT_EOF
-    
-    log "Installation GUI terminée"
+
+    if [[ $? -ne 0 ]]; then
+        log_warning "Installation GUI partiellement échouée, mais on continue"
+    else
+        log_success "Installation GUI terminée"
+    fi
 }
+
+
 # Installation manuelle de paquets supplémentaires
 install_additional_packages() {
     log "=== INSTALLATION PAQUETS SUPPLEMENTAIRES ==="
@@ -1281,37 +1394,132 @@ CHROOT_EOF
     fi
 }
 
+# Configuration utilisateur - CORRIGÉE
 setup_user() {
-    read -p "Nom d'utilisateur : " USERNAME
-    read -sp "Entrez le mot de passe pour $USERNAME : " PASSWORD
-    echo
-    read -sp "Confirmez le mot de passe : " PASSWORD_CONFIRM
-    echo
+    log "=== CONFIGURATION UTILISATEUR ==="
+    
+    local username_file="/mnt/root/username_info"
+    local username="$USERNAME"
+    [[ -f "$username_file" ]] && username=$(cat "$username_file")
+    
+    arch-chroot /mnt /bin/bash << CHROOT_EOF
+set -e
 
-    if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
-        echo "Les mots de passe ne correspondent pas."
-        exit 1
+USERNAME=$(cat /root/username_info 2>/dev/null || echo "cyber")
+
+echo "Configuration de l'utilisateur: $USERNAME"
+
+# Vérification si l'utilisateur existe déjà
+if id "$USERNAME" &>/dev/null; then
+    echo "L'utilisateur $USERNAME existe déjà, suppression..."
+    userdel -r "$USERNAME" 2>/dev/null || true
+fi
+
+# Création utilisateur avec tous les groupes nécessaires
+echo "Création de l'utilisateur $USERNAME..."
+useradd -m -g users -G wheel,storage,power,audio,video,optical,lp,scanner "$USERNAME" || {
+    echo "Erreur: Échec création utilisateur"
+    exit 1
+}
+
+# Configuration du mot de passe utilisateur
+echo "Configuration du mot de passe pour $USERNAME:"
+echo "Mot de passe par défaut: $USERNAME"
+echo "$USERNAME:$USERNAME" | chpasswd
+
+# Configuration sudo
+echo "Configuration des droits sudo..."
+sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers || {
+    echo "Erreur: Configuration sudo échouée"
+    exit 1
+}
+
+# Configuration du mot de passe root
+echo "Configuration du mot de passe root:"
+echo "Mot de passe par défaut: root"
+echo "root:root" | chpasswd
+
+# Création des dossiers utilisateur de base
+echo "Création des dossiers utilisateur..."
+su - "$USERNAME" -c "mkdir -p ~/Documents ~/Downloads ~/Pictures ~/Videos ~/Music" || true
+
+# Configuration shell par défaut
+echo "Configuration du shell..."
+chsh -s /bin/bash "$USERNAME" || echo "Attention: Shell non configuré"
+
+# Permissions sur le dossier home
+chown -R "$USERNAME":users "/home/$USERNAME"
+chmod 755 "/home/$USERNAME"
+
+echo "Configuration utilisateur terminée"
+echo ""
+echo "INFORMATIONS DE CONNEXION:"
+echo "=========================="
+echo "Utilisateur: $USERNAME"
+echo "Mot de passe: $USERNAME"
+echo ""
+echo "Root:"
+echo "Mot de passe: root"
+echo ""
+echo "ATTENTION: Changez ces mots de passe après la première connexion !"
+
+CHROOT_EOF
+
+    if [[ $? -ne 0 ]]; then
+        error_exit "Échec de la configuration utilisateur"
     fi
-
-    useradd -m -G wheel "$USERNAME"
-    echo "$USERNAME:$PASSWORD" | chpasswd
-
-    sed -i '/%wheel ALL=(ALL) ALL/s/^# //' /etc/sudoers
+    
+    log_success "Configuration utilisateur terminée"
 }
 
 # Nettoyage final
+# Nettoyage final - CORRIGÉ
 cleanup() {
     log "=== NETTOYAGE FINAL ==="
     
-    # Démontage des partitions
-    umount -R /mnt 2>/dev/null || true
-    swapoff "${DISK}2" 2>/dev/null || true
+    # Synchronisation des données
+    sync
+    
+    # Démontage des partitions dans l'ordre inverse
+    log "Démontage des partitions..."
+    
+    # Démontage récursif avec retry
+    local retry_count=0
+    while [[ $retry_count -lt 5 ]]; do
+        if umount -R /mnt 2>/dev/null; then
+            log_success "Partitions démontées"
+            break
+        else
+            ((retry_count++))
+            log_warning "Tentative de démontage $retry_count/5..."
+            sleep 2
+            
+            # Forcer la fermeture des processus utilisant /mnt
+            fuser -km /mnt 2>/dev/null || true
+            sleep 1
+        fi
+    done
+    
+    if [[ $retry_count -eq 5 ]]; then
+        log_warning "Impossible de démonter proprement, démontage forcé"
+        umount -fl /mnt 2>/dev/null || true
+    fi
+    
+    # Désactivation du swap
+    log "Désactivation du swap..."
+    swapoff "${DISK}2" 2>/dev/null || log_warning "Swap déjà désactivé"
     
     # Nettoyage des fichiers temporaires
+    log "Nettoyage des fichiers temporaires..."
     rm -f /tmp/has_separate_home /tmp/boot_mode
     
-    log "Nettoyage terminé"
+    # Sauvegarde du log
+    cp "$LOG_FILE" "/tmp/arch_install_$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
+    
+    log_success "Nettoyage terminé"
 }
+
+
 
 # Script post-installation (à exécuter après le premier redémarrage)
 create_post_install_script() {
@@ -1508,92 +1716,62 @@ REPAIR_MENU
 }
 
 # Fonction principale
+# Fonction principale - CORRIGÉE
 main() {
-    log "=== DÉBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
+    log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
+    log "Script version: 2025.1-corrected-fixed"
 
-    # Étapes de base de l'installation
-    check_prerequisites
-    partition_menu
-    prepare_disk_for_format
-    format_partitions
-    mount_partitions
-    install_base
-    configure_system_enhanced
-    install_gui
-    install_additional_packages
-    install_additional_packages_menu
+    # Gestion des signaux pour nettoyage en cas d'interruption
+    trap cleanup EXIT INT TERM
 
-    # Demande interactive des identifiants utilisateur
-    read -p "Nom d'utilisateur : " USERNAME
-    read -sp "Entrez le mot de passe pour $USERNAME : " PASSWORD
-    echo
-    read -sp "Confirmez le mot de passe : " PASSWORD_CONFIRM
-    echo
-
-    if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
-        echo "Les mots de passe ne correspondent pas."
-        exit 1
+    # Vérification environnement
+    if [[ ! -d /sys/firmware/efi ]] && [[ ! -d /sys/firmware/efi/efivars ]]; then
+        log "Système BIOS détecté"
+    else
+        log "Système UEFI détecté"
     fi
 
-    log "Création des fichiers pour le setup utilisateur dans le chroot..."
-
-    # Écrire le mot de passe dans un fichier temporaire sur la partition montée
-    echo "$PASSWORD" > /mnt/root/.user_passwd
-    chmod 600 /mnt/root/.user_passwd
-
-    # Créer le script dans le chroot qui lira ce fichier pour chpasswd
-    cat <<'EOF' > /mnt/root/setup_user.sh
-#!/bin/bash
-set -e
-
-USERNAME="$1"
-
-# Lecture du mot de passe depuis le fichier temporaire
-PASSWORD=$(cat /root/.user_passwd)
-
-useradd -m -G wheel "$USERNAME"
-echo "$USERNAME:$PASSWORD" | chpasswd
-
-sed -i '/^# %wheel ALL=(ALL) ALL/s/^# //' /etc/sudoers
-
-# Supprimer le fichier temporaire après usage
-rm -f /root/.user_passwd
-EOF
-
-    chmod +x /mnt/root/setup_user.sh
-
-    log "Exécution du script utilisateur dans le chroot..."
-    arch-chroot /mnt /root/setup_user.sh "$USERNAME" || error_exit "Échec de la création de l'utilisateur"
-
-    log "Nettoyage des fichiers temporaires..."
-    rm -f /mnt/root/setup_user.sh /mnt/root/.user_passwd
-
-    # Création script post-install
-    create_post_install_script
+    # Exécution des fonctions dans l'ordre
+    check_prerequisites          # Vérification + détection automatique
+    partition_menu              # Menu de partitionnement
+    prepare_disk_for_format     # Préparation du disque
+    format_partitions           # Formatage avec gestion d'erreur
+    mount_partitions            # Montage avec vérifications
+    install_base                # Installation de base robuste
+    configure_system            # Configuration système complète
+    install_gui                 # Installation environnement graphique
+    setup_user                  # Configuration utilisateur
+    create_post_install_script  # Script post-installation
 
     # Message final
-    log "=== INSTALLATION TERMINÉE ==="
+    log_success "=== INSTALLATION TERMINEE AVEC SUCCES ==="
     echo ""
     echo "=============================================================="
-    echo "                  INSTALLATION TERMINÉE                      "
+    echo "                  INSTALLATION TERMINEE                      "
     echo "=============================================================="
     echo "  Mode de boot: $BOOT_MODE"
-    echo "  1. Redémarrez le système: reboot                           "
-    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME           "
-    echo "  3. Exécutez le script post-installation:                   "
-    echo "     ./post_install.sh                                       "
-    echo "                                                              "
-    echo "  Log sauvegardé dans: /root/arch_install.log                 "
+    echo "  Disque utilisé: $DISK"
+    echo ""
+    echo "  INFORMATIONS DE CONNEXION:"
+    echo "  Utilisateur: $USERNAME / Mot de passe: $USERNAME"
+    echo "  Root: root / Mot de passe: root"
+    echo ""
+    echo "  ÉTAPES SUIVANTES:"
+    echo "  1. Redémarrez le système: reboot"
+    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME"
+    echo "  3. Changez les mots de passe par défaut"
+    echo "  4. Exécutez le script post-installation: ./post_install.sh"
+    echo ""
+    echo "  Log sauvegardé dans: $LOG_FILE"
     echo "=============================================================="
     echo ""
 
     read -p "Voulez-vous redémarrer maintenant? [y/N]: " reboot_confirm
-    if [[ $reboot_confirm =~ ^[yY]$ ]]; then
-        cleanup
+    if [[ $reboot_confirm == [yY] ]]; then
+        log "Redémarrage demandé par l'utilisateur"
         reboot
     else
-        cleanup
         log "Redémarrage annulé. N'oubliez pas de redémarrer manuellement."
     fi
 }
