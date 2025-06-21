@@ -1,222 +1,161 @@
 #!/bin/bash
 set -euo pipefail
-# V50
-# === Fonctions utilitaires ===
-
-error_exit() {
-  echo "[ERROR] $1"
-  exit 1
-}
-
-debug() {
-  echo "[DEBUG] $1"
-}
-
-# Ask question with default
+# V51
+### === UTILS === ###
 ask() {
   local prompt="$1"
   local default="${2:-}"
-  if [[ -n "$default" ]]; then
-    read -rp "$prompt [$default]: " answer
-    answer="${answer:-$default}"
-  else
-    read -rp "$prompt: " answer
-  fi
-  echo "$answer"
+  read -rp "$prompt${default:+ [$default]}: " reply
+  echo "${reply:-$default}"
 }
 
-# Yes/no via whiptail
 ask_yesno() {
-  local prompt="$1"
-  whiptail --yesno "$prompt" 8 60
-  return $?
+  while true; do
+    read -rp "$1 [o/n]: " yn
+    case "$yn" in
+      [Oo]*) return 0 ;;
+      [Nn]*) return 1 ;;
+      *) echo "Répondez par o ou n." ;;
+    esac
+  done
 }
 
-# === Detect boot mode ===
+log() {
+  echo -e "\e[1;34m==> $1\e[0m"
+}
+
+error_exit() {
+  echo -e "\e[1;31mErreur: $1\e[0m"
+  exit 1
+}
+
+### === DÉTECTION DU MODE DE DÉMARRAGE === ###
 detect_boot_mode() {
-  if [[ -d /sys/firmware/efi/efivars ]]; then
-    echo "UEFI"
-  else
-    echo "Legacy"
-  fi
+  [[ -d /sys/firmware/efi ]] && echo "UEFI" || echo "Legacy"
 }
 
-# === List disks with size and model ===
-list_disks() {
-  lsblk -dpno NAME,SIZE,MODEL | grep -v "rom" | awk '{print $1" "$2" "$3}'
-}
-
-# === Choose disk ===
+### === CHOIX DU DISQUE === ###
 choose_disk() {
-  local disks=()
-  local options=()
-  while IFS= read -r line; do
-    disks+=("$line")
-  done < <(list_disks)
-  local i=1
-  for d in "${disks[@]}"; do
-    local name size model
-    read -r name size model <<< "$d"
-    options+=("$name" "$size $model")
-    ((i++))
+  log "Liste des disques disponibles :"
+  lsblk -dpno NAME,SIZE | grep -v "loop"
+  while true; do
+    disk=$(ask "Entrez le disque cible (ex: /dev/sda)")
+    [[ -b "$disk" ]] || { echo "Disque invalide."; continue; }
+    read -rp "Confirmer l'effacement de toutes les données sur $disk ? [o/n]: " confirm
+    [[ "$confirm" =~ [Oo] ]] && break
   done
-  whiptail --title "Choix du disque" --menu "Sélectionnez le disque d'installation:" 15 70 5 "${options[@]}" 3>&1 1>&2 2>&3
+  echo "$disk"
 }
 
-# === List partitions for disk ===
-list_partitions() {
-  local disk="$1"
-  lsblk -lnpo NAME,SIZE,TYPE,MOUNTPOINT "$disk" | awk '$3=="part" {print $1" "$2" "$4}'
-}
+### === PARTITIONNEMENT AUTOMATIQUE === ###
+auto_partition() {
+  local disk="$1" boot_mode="$2"
+  log "Création d'une table GPT sur $disk..."
+  parted -s "$disk" mklabel gpt
 
-# === Choose partition from disk (for root, boot etc) ===
-choose_partition() {
-  local disk="$1"
-  local purpose="$2" # ex: "racine", "/boot" ...
-  local parts=()
-  local options=()
-  while IFS= read -r line; do
-    parts+=("$line")
-  done < <(list_partitions "$disk")
-  if [[ ${#parts[@]} -eq 0 ]]; then
-    error_exit "Aucune partition trouvée sur $disk"
-  fi
-
-  local i=1
-  for p in "${parts[@]}"; do
-    local name size mount
-    read -r name size mount <<< "$p"
-    local label="$size"
-    [[ -n "$mount" ]] && label+=" (montée sur $mount)"
-    options+=("$name" "$label")
-    ((i++))
-  done
-
-  whiptail --title "Choix partition $purpose" --menu "Sélectionnez la partition pour $purpose : (ESC = pas de partition)" 15 70 6 "${options[@]}" 3>&1 1>&2 2>&3 || echo ""
-}
-
-# === Check and unmount mounted partitions on disk ===
-check_and_unmount() {
-  local disk=$1
-  local mounted_parts
-  mounted_parts=$(lsblk -lnpo NAME,MOUNTPOINT "$disk" | awk '$2!="" {print $1}')
-
-  if [[ -n "$mounted_parts" ]]; then
-    debug "Partitions montées sur $disk :"
-    debug "$mounted_parts"
-    if ask_yesno "Des partitions sont montées sur $disk. Voulez-vous les démonter ?"; then
-      for part in $mounted_parts; do
-        debug "Démontage de $part ..."
-        umount -R "$part" || error_exit "Impossible de démonter $part"
-      done
-      debug "Partitions démontées."
-    else
-      error_exit "Démontage nécessaire. Relancez le script après."
-    fi
+  log "Création des partitions..."
+  if [[ "$boot_mode" == "UEFI" ]]; then
+    parted -s "$disk" mkpart ESP fat32 1MiB 513MiB
+    parted -s "$disk" set 1 esp on
+    boot_part="${disk}1"
   else
-    debug "Aucune partition montée sur $disk"
+    parted -s "$disk" mkpart primary ext4 1MiB 513MiB
+    parted -s "$disk" set 1 boot on
+    boot_part="${disk}1"
   fi
+
+  parted -s "$disk" mkpart primary linux-swap 513MiB 4GiB
+  swap_part="${disk}2"
+
+  parted -s "$disk" mkpart primary ext4 4GiB 100%
+  root_part="${disk}3"
+
+  log "Rafraîchissement des partitions..."
+  partprobe "$disk"
 }
 
-# === Montage des partitions ===
+### === FORMATAGE === ###
+format_partitions() {
+  log "Formatage des partitions..."
+
+  [[ -n "${boot_part:-}" ]] && {
+    if [[ "$boot_mode" == "UEFI" ]]; then
+      mkfs.fat -F32 "$boot_part"
+    else
+      mkfs.ext4 "$boot_part"
+    fi
+  }
+
+  mkfs.ext4 "$root_part"
+
+  [[ -n "${swap_part:-}" ]] && {
+    mkswap "$swap_part"
+    swapon "$swap_part"
+  }
+}
+
+### === MONTAGE === ###
 mount_partitions() {
-  local boot_part=$1
-  local root_part=$2
-  local home_part=$3
-  local var_part=$4
-  local tmp_part=$5
-  local data_part=$6
+  log "Montage de la racine..."
+  mount "$root_part" /mnt
 
-  debug "Montage de la partition racine $root_part sur /mnt"
-  mount "$root_part" /mnt || error_exit "Erreur montage /"
-
-  if [[ -n "$boot_part" ]]; then
+  if [[ -n "${boot_part:-}" ]]; then
     mkdir -p /mnt/boot
-    debug "Montage de /boot : $boot_part"
-    mount "$boot_part" /mnt/boot || error_exit "Erreur montage /boot"
-  fi
-
-  if [[ -n "$home_part" ]]; then
-    mkdir -p /mnt/home
-    debug "Montage de /home : $home_part"
-    mount "$home_part" /mnt/home || error_exit "Erreur montage /home"
-  fi
-
-  if [[ -n "$var_part" ]]; then
-    mkdir -p /mnt/var
-    debug "Montage de /var : $var_part"
-    mount "$var_part" /mnt/var || error_exit "Erreur montage /var"
-  fi
-
-  if [[ -n "$tmp_part" ]]; then
-    mkdir -p /mnt/tmp
-    debug "Montage de /tmp : $tmp_part"
-    mount "$tmp_part" /mnt/tmp || error_exit "Erreur montage /tmp"
-  fi
-
-  if [[ -n "$data_part" ]]; then
-    mkdir -p /mnt/data
-    debug "Montage de /data : $data_part"
-    mount "$data_part" /mnt/data || error_exit "Erreur montage /data"
+    mount "$boot_part" /mnt/boot
   fi
 }
 
-# === Installation base ===
+### === INSTALLATION DE BASE === ###
 install_base() {
-  debug "Installation base systeme (base, linux, firmware)"
-  pacstrap /mnt base linux linux-firmware base-devel || error_exit "pacstrap échoué"
+  log "Installation de base d'Arch Linux..."
+  pacstrap /mnt base linux linux-firmware base-devel networkmanager sudo grub
 }
 
-# === Configuration système ===
+### === CONFIGURATION SYSTÈME === ###
 configure_system() {
-  local hostname=$1
-  local username=$2
-  local userpass=$3
-  local rootpass=$4
-  local boot_mode=$5
-  local disk=$6
+  local hostname="$1" username="$2" userpass="$3" rootpass="$4"
 
-  debug "Génération du fstab"
+  log "Configuration système..."
   genfstab -U /mnt >> /mnt/etc/fstab
 
-  debug "Configuration locale, hostname, utilisateurs"
-  arch-chroot /mnt /bin/bash <<EOF
+  arch-chroot /mnt bash -e <<EOF
 ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime
 hwclock --systohc
 echo 'fr_FR.UTF-8 UTF-8' > /etc/locale.gen
 locale-gen
-echo LANG=fr_FR.UTF-8 > /etc/locale.conf
+echo "LANG=fr_FR.UTF-8" > /etc/locale.conf
 echo "$hostname" > /etc/hostname
-echo '127.0.0.1 localhost' >> /etc/hosts
-echo '::1       localhost' >> /etc/hosts
+echo "127.0.0.1 localhost" > /etc/hosts
+echo "::1       localhost" >> /etc/hosts
 echo "127.0.1.1 $hostname.localdomain $hostname" >> /etc/hosts
-pacman -S --noconfirm networkmanager sudo
-systemctl enable NetworkManager
+
 echo "root:$rootpass" | chpasswd
 useradd -m -G wheel "$username"
 echo "$username:$userpass" | chpasswd
-echo '%wheel ALL=(ALL) ALL' >> /etc/sudoers
-EOF
+echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
 
-  debug "Installation bootloader $boot_mode"
+systemctl enable NetworkManager
+EOF
+}
+
+### === INSTALL BOOTLOADER === ###
+install_bootloader() {
+  log "Installation du bootloader GRUB..."
   if [[ "$boot_mode" == "UEFI" ]]; then
-    arch-chroot /mnt pacman -S --noconfirm efibootmgr grub
+    arch-chroot /mnt pacman -S --noconfirm efibootmgr
     arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
   else
-    arch-chroot /mnt pacman -S --noconfirm grub
     arch-chroot /mnt grub-install --target=i386-pc "$disk"
   fi
   arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 }
 
-# === Installation environnement graphique ===
+### === INSTALL ENVIRONNEMENT GRAPHIQUE === ###
 install_desktop_env() {
-  local env=$1
-  debug "Installation environnement $env..."
-  case $env in
-    hyprland)
-      arch-chroot /mnt pacman -S --noconfirm hyprland xorg-server xorg-xinit kitty waybar network-manager-applet
-      ;;
+  local env="$1"
+  log "Installation de l’environnement $env..."
+
+  case "$env" in
     gnome)
       arch-chroot /mnt pacman -S --noconfirm gnome gnome-extra gdm
       arch-chroot /mnt systemctl enable gdm
@@ -226,89 +165,69 @@ install_desktop_env() {
       arch-chroot /mnt systemctl enable sddm
       ;;
     xfce)
-      arch-chroot /mnt pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
+      arch-chroot /mnt pacman -S --noconfirm xfce4 lightdm lightdm-gtk-greeter
       arch-chroot /mnt systemctl enable lightdm
       ;;
-    minimal)
-      echo "Pas d'environnement graphique installé."
+    hyprland)
+      arch-chroot /mnt pacman -S --noconfirm hyprland xorg-server xorg-xinit kitty waybar
       ;;
-    *)
-      echo "Environnement inconnu, installation minimale."
+    minimal)
+      echo "Pas d’environnement graphique installé."
       ;;
   esac
 }
 
-# === Installer paquets supplémentaires ===
-install_extra_packages() {
-  local pkgs
-  pkgs=$(whiptail --inputbox "Entrez les paquets supplémentaires à installer (espace séparés), ou laissez vide :" 8 60 3>&1 1>&2 2>&3)
-  if [[ -n "$pkgs" ]]; then
-    arch-chroot /mnt pacman -S --noconfirm $pkgs
-  fi
+### === PAQUETS SUPPLÉMENTAIRES === ###
+install_extra() {
+  read -rp "Ajouter des paquets supplémentaires ? (ex: firefox nano htop): " extras
+  [[ -n "$extras" ]] && arch-chroot /mnt pacman -S --noconfirm $extras
 }
 
-# === Finalisation ===
-finalize() {
-  debug "Démontage des partitions..."
-  umount -R /mnt
-  debug "Installation terminée."
-}
-
-# === MAIN ===
-
+### === MAIN === ###
 main() {
+  clear
+  log "Démarrage de l'installation Arch Linux..."
+
+  disk=$(choose_disk)
   boot_mode=$(detect_boot_mode)
-  debug "Mode de boot détecté : $boot_mode"
+  echo "Mode de démarrage : $boot_mode"
 
-  disk=$(choose_disk) || error_exit "Choix du disque annulé."
-  debug "Disque choisi : $disk"
-
-  check_and_unmount "$disk"
-
-  root_part=$(choose_partition "$disk" "racine") || error_exit "Choix partition racine annulé."
-  debug "Partition racine : $root_part"
-
-  # Partitions optionnelles via menus
-  boot_part=$(choose_partition "$disk" "/boot")
-  debug "Partition /boot : ${boot_part:-(none)}"
-
-  home_part=$(choose_partition "$disk" "/home")
-  debug "Partition /home : ${home_part:-(none)}"
-
-  var_part=$(choose_partition "$disk" "/var")
-  debug "Partition /var : ${var_part:-(none)}"
-
-  tmp_part=$(choose_partition "$disk" "/tmp")
-  debug "Partition /tmp : ${tmp_part:-(none)}"
-
-  data_part=$(choose_partition "$disk" "/data")
-  debug "Partition /data : ${data_part:-(none)}"
-
-  mount_partitions "$boot_part" "$root_part" "$home_part" "$var_part" "$tmp_part" "$data_part"
-
+  auto_partition "$disk" "$boot_mode"
+  format_partitions
+  mount_partitions
   install_base
 
-  hostname=$(whiptail --inputbox "Nom de la machine (hostname)" 8 40 "archlinux" 3>&1 1>&2 2>&3)
-  username=$(whiptail --inputbox "Nom de l'utilisateur" 8 40 3>&1 1>&2 2>&3)
-  userpass=$(whiptail --passwordbox "Mot de passe utilisateur" 8 40 3>&1 1>&2 2>&3)
-  rootpass=$(whiptail --passwordbox "Mot de passe root" 8 40 3>&1 1>&2 2>&3)
+  hostname=$(ask "Nom de la machine" "archlinux")
+  username=$(ask "Nom d’utilisateur")
+  userpass=$(ask "Mot de passe utilisateur")
+  rootpass=$(ask "Mot de passe root")
 
-  configure_system "$hostname" "$username" "$userpass" "$rootpass" "$boot_mode" "$disk"
+  configure_system "$hostname" "$username" "$userpass" "$rootpass"
+  install_bootloader
 
-  desktop_env=$(whiptail --menu "Choisissez environnement graphique" 15 50 5 \
-    hyprland "Hyprland (Wayland)" \
-    gnome "GNOME" \
-    kde "KDE Plasma" \
-    xfce "XFCE" \
-    minimal "Minimal sans GUI" 3>&1 1>&2 2>&3)
+  echo "Choisissez un environnement graphique :"
+  echo "1) GNOME"
+  echo "2) KDE"
+  echo "3) XFCE"
+  echo "4) Hyprland"
+  echo "5) Aucun (installation minimale)"
+  while true; do
+    env_choice=$(ask "Choix (1-5)")
+    case "$env_choice" in
+      1) env="gnome"; break ;;
+      2) env="kde"; break ;;
+      3) env="xfce"; break ;;
+      4) env="hyprland"; break ;;
+      5) env="minimal"; break ;;
+      *) echo "Choix invalide" ;;
+    esac
+  done
 
-  install_desktop_env "$desktop_env"
+  install_desktop_env "$env"
+  install_extra
 
-  install_extra_packages
-
-  finalize
-
-  whiptail --msgbox "Installation terminée avec succès !" 8 40
+  log "Installation terminée avec succès !"
+  echo "Vous pouvez maintenant démonter et redémarrer."
 }
 
 main
