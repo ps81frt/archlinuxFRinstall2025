@@ -11,7 +11,7 @@
 set -e  # Arrêt du script en cas d'erreur
 
 # Variables globales
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${ZSH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/tmp/arch_install.log"
 DISK="/dev/sda"
 USERNAME="cyber"
@@ -587,7 +587,7 @@ configure_system() {
     echo "$boot_mode" > /mnt/root/boot_mode
     
     # Configuration en chroot
-    arch-chroot /mnt /bin/bash << CHROOT_EOF
+    arch-chroot /mnt /bin/zsh << CHROOT_EOF
     
     # Lecture du mode de boot
     BOOT_MODE=\$(cat /root/boot_mode 2>/dev/null || echo "uefi")
@@ -653,7 +653,7 @@ CHROOT_EOF
 install_gui() {
     log "=== INSTALLATION ENVIRONNEMENT GRAPHIQUE ==="
     
-    arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
+    arch-chroot /mnt /bin/zsh << 'CHROOT_EOF'
     
     # Installation serveur X
     pacman -S --noconfirm xorg-server xorg-apps xorg-xinit
@@ -706,7 +706,7 @@ CHROOT_EOF
 setup_user() {
     log "=== CONFIGURATION UTILISATEUR ==="
     
-    arch-chroot /mnt /bin/bash << CHROOT_EOF
+    arch-chroot /mnt /bin/zsh << CHROOT_EOF
     
     # Création utilisateur
     useradd -m -g users -G wheel,storage,power,audio $USERNAME
@@ -740,7 +740,7 @@ create_post_install_script() {
     log "=== CREATION DU SCRIPT POST-INSTALLATION ==="
     
     cat > /mnt/home/$USERNAME/post_install.sh << 'POST_EOF'
-#!/bin/bash
+#!/bin/zsh
 
 echo "=== CONFIGURATION POST-INSTALLATION ==="
 
@@ -840,6 +840,6 @@ main() {
 }
 
 # Point d'entrée du script
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if [[ "${ZSH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
