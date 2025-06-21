@@ -1,4 +1,5 @@
 #!/bin/bash
+# V45
 set -euo pipefail
 
 # === Fonctions utilitaires ===
