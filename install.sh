@@ -403,6 +403,7 @@ EOF
 }
 
 # Menu de choix du partitionnement
+# Enhanced partition menu with GRUB repair option
 partition_menu() {
     log "=== CHOIX DU PARTITIONNEMENT ==="
     
@@ -415,8 +416,9 @@ partition_menu() {
     echo "1) Partitionnement automatique (recommandé)"
     echo "2) Partitionnement manuel avec $(if [[ $BOOT_MODE == "uefi" ]]; then echo "gdisk"; else echo "fdisk"; fi)"
     echo "3) Passer (partitions déjà créées)"
+    echo "4) Réparation GRUB (système déjà installé)"
     echo ""
-    read -p "Votre choix [1-3]: " choice
+    read -p "Votre choix [1-4]: " choice
     
     case $choice in
         1)
@@ -432,11 +434,267 @@ partition_menu() {
             echo "true" > /tmp/has_separate_home
             echo "$BOOT_MODE" > /tmp/boot_mode
             ;;
+        4)
+            log_info "Mode réparation GRUB sélectionné"
+            grub_repair_mode
+            exit 0
+            ;;
         *)
             log_warning "Choix invalide, partitionnement automatique par défaut"
             auto_partition "$DISK"
             ;;
     esac
+}
+
+# Fonction de réparation GRUB
+grub_repair_mode() {
+    log "=== MODE REPARATION GRUB ==="
+    
+    echo ""
+    echo "=============================================================="
+    echo "                  MODE REPARATION GRUB                       "
+    echo "=============================================================="
+    echo "Ce mode permet de réparer GRUB sur un système déjà installé"
+    echo ""
+    
+    # Affichage des disques disponibles
+    echo "Disques disponibles:"
+    lsblk -d -n -o NAME,SIZE,MODEL | grep -E '^[s|n|v]d[a-z]|^mmcblk[0-9]' | while read line; do
+        echo "  /dev/$line"
+    done
+    echo ""
+    
+    # Sélection du disque
+    read -p "Entrez le disque principal (ex: /dev/sda): " REPAIR_DISK
+    
+    if [[ ! -b "$REPAIR_DISK" ]]; then
+        error_exit "Disque $REPAIR_DISK non trouvé"
+    fi
+    
+    log "Disque sélectionné: $REPAIR_DISK"
+    
+    # Affichage des partitions
+    echo ""
+    echo "Partitions disponibles sur $REPAIR_DISK:"
+    lsblk "$REPAIR_DISK"
+    echo ""
+    
+    # Sélection de la partition root
+    read -p "Entrez la partition root (ex: ${REPAIR_DISK}3): " ROOT_PARTITION
+    
+    if [[ ! -b "$ROOT_PARTITION" ]]; then
+        error_exit "Partition $ROOT_PARTITION non trouvée"
+    fi
+    
+    # Sélection de la partition boot
+    if [[ $BOOT_MODE == "uefi" ]]; then
+        read -p "Entrez la partition EFI (ex: ${REPAIR_DISK}1): " BOOT_PARTITION
+    else
+        read -p "Entrez la partition boot (ex: ${REPAIR_DISK}1): " BOOT_PARTITION
+    fi
+    
+    if [[ ! -b "$BOOT_PARTITION" ]]; then
+        error_exit "Partition boot $BOOT_PARTITION non trouvée"
+    fi
+    
+    log "Partition root: $ROOT_PARTITION"
+    log "Partition boot: $BOOT_PARTITION"
+    
+    # Confirmation
+    echo ""
+    echo "Configuration détectée:"
+    echo "  Mode de boot: $BOOT_MODE"
+    echo "  Disque: $REPAIR_DISK"
+    echo "  Partition root: $ROOT_PARTITION"
+    echo "  Partition boot: $BOOT_PARTITION"
+    echo ""
+    read -p "Continuer avec la réparation GRUB? [y/N]: " confirm
+    
+    if [[ $confirm != [yY] ]]; then
+        log "Réparation GRUB annulée"
+        exit 0
+    fi
+    
+    # Début de la réparation
+    repair_grub_system "$REPAIR_DISK" "$ROOT_PARTITION" "$BOOT_PARTITION"
+}
+
+# Fonction de réparation du système GRUB
+repair_grub_system() {
+    local disk=$1
+    local root_part=$2
+    local boot_part=$3
+    
+    log "=== REPARATION GRUB EN COURS ==="
+    
+    # Démontage préventif
+    umount -R /mnt 2>/dev/null || true
+    
+    # Montage de la partition root
+    log "Montage de la partition root $root_part..."
+    mount "$root_part" /mnt || error_exit "Impossible de monter $root_part"
+    
+    # Montage de la partition boot
+    log "Montage de la partition boot $boot_part..."
+    mkdir -p /mnt/boot
+    mount "$boot_part" /mnt/boot || error_exit "Impossible de monter $boot_part"
+    
+    # Montage des pseudo-systèmes de fichiers
+    log "Montage des pseudo-systèmes de fichiers..."
+    mount --types proc /proc /mnt/proc || error_exit "Échec montage /proc"
+    mount --rbind /sys /mnt/sys || error_exit "Échec montage /sys"
+    mount --make-rslave /mnt/sys
+    mount --rbind /dev /mnt/dev || error_exit "Échec montage /dev"
+    mount --make-rslave /mnt/dev
+    
+    # Réparation GRUB en chroot
+    log "Réparation GRUB en chroot..."
+    
+    arch-chroot /mnt /bin/bash << CHROOT_REPAIR_EOF
+    
+    echo "=== Réparation GRUB en cours ==="
+    
+    # Vérification de la connectivité réseau pour les mises à jour
+    if ping -c 1 8.8.8.8 &> /dev/null; then
+        echo "Mise à jour des paquets GRUB..."
+        pacman -Sy grub --noconfirm
+        
+        if [[ "$BOOT_MODE" == "uefi" ]]; then
+            pacman -S --noconfirm efibootmgr
+        fi
+    else
+        echo "Pas de réseau - utilisation des paquets existants"
+    fi
+    
+    # Réinstallation de GRUB
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        echo "Réinstallation GRUB UEFI..."
+        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck || {
+            echo "ERREUR: Échec de l'installation GRUB UEFI"
+            exit 1
+        }
+    else
+        echo "Réinstallation GRUB BIOS..."
+        grub-install --target=i386-pc "$disk" --recheck || {
+            echo "ERREUR: Échec de l'installation GRUB BIOS"
+            exit 1
+        }
+    fi
+    
+    # Régénération de la configuration GRUB
+    echo "Régénération de la configuration GRUB..."
+    grub-mkconfig -o /boot/grub/grub.cfg || {
+        echo "ERREUR: Échec de la génération de la configuration GRUB"
+        exit 1
+    }
+    
+    # Ajout d'entrées de réparation personnalisées
+    echo "Ajout d'entrées de réparation au menu GRUB..."
+    
+    cat >> /etc/grub.d/40_custom << 'REPAIR_ENTRIES'
+#!/bin/sh
+exec tail -n +3 \$0
+
+menuentry 'Arch Linux - Mode Réparation' --class arch --class gnu-linux --class gnu --class os {
+    load_video
+    set gfxpayload=keep
+    insmod gzio
+    insmod part_gpt
+    insmod part_msdos
+    insmod ext2
+    search --no-floppy --fs-uuid --set=root
+    linux /boot/vmlinuz-linux root=PARTUUID=AUTO rw systemd.unit=rescue.target
+    initrd /boot/initramfs-linux.img
+}
+
+menuentry 'Arch Linux - Shell de Récupération' --class arch --class gnu-linux --class gnu --class os {
+    load_video
+    set gfxpayload=keep
+    insmod gzio
+    insmod part_gpt
+    insmod part_msdos
+    insmod ext2
+    search --no-floppy --fs-uuid --set=root
+    linux /boot/vmlinuz-linux root=PARTUUID=AUTO rw init=/bin/bash
+    initrd /boot/initramfs-linux.img
+}
+REPAIR_ENTRIES
+
+    chmod +x /etc/grub.d/40_custom
+    
+    # Régénération finale
+    grub-mkconfig -o /boot/grub/grub.cfg
+    
+    echo "=== Réparation GRUB terminée avec succès ==="
+    
+CHROOT_REPAIR_EOF
+    
+    # Vérification du succès
+    if [[ $? -eq 0 ]]; then
+        log_success "Réparation GRUB terminée avec succès"
+    else
+        error_exit "Échec de la réparation GRUB"
+    fi
+    
+    # Démontage
+    log "Démontage des partitions..."
+    umount -R /mnt 2>/dev/null || true
+    
+    # Message final
+    echo ""
+    echo "=============================================================="
+    echo "                REPARATION GRUB TERMINEE                     "
+    echo "=============================================================="
+    echo "  GRUB a été réparé avec succès sur $disk"
+    echo ""
+    echo "  Entrées ajoutées au menu GRUB:"
+    echo "  - Arch Linux (démarrage normal)"
+    echo "  - Arch Linux - Mode Réparation"
+    echo "  - Arch Linux - Shell de Récupération"
+    echo ""
+    echo "  Vous pouvez maintenant redémarrer le système."
+    echo "=============================================================="
+    echo ""
+    
+    read -p "Voulez-vous redémarrer maintenant? [y/N]: " reboot_confirm
+    if [[ $reboot_confirm == [yY] ]]; then
+        log "Redémarrage du système..."
+        reboot
+    else
+        log "Redémarrage annulé. Tapez 'reboot' pour redémarrer manuellement."
+    fi
+}
+
+# Fonction de réparation GRUB rapide (utilitaire)
+quick_grub_repair() {
+    echo "=== REPARATION GRUB RAPIDE ==="
+    
+    # Auto-détection des partitions
+    ROOT_PART=$(findmnt -n -o SOURCE /)
+    BOOT_PART=$(findmnt -n -o SOURCE /boot)
+    
+    if [[ -z "$ROOT_PART" ]]; then
+        echo "Impossible de détecter la partition root"
+        return 1
+    fi
+    
+    echo "Partition root détectée: $ROOT_PART"
+    echo "Partition boot détectée: $BOOT_PART"
+    
+    # Réinstallation GRUB
+    if [[ -d /sys/firmware/efi/efivars ]]; then
+        echo "Mode UEFI détecté"
+        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
+    else
+        echo "Mode BIOS détecté"
+        DISK=$(lsblk -no PKNAME "$ROOT_PART" | head -1)
+        grub-install --target=i386-pc "/dev/$DISK" --recheck
+    fi
+    
+    # Régénération config
+    grub-mkconfig -o /boot/grub/grub.cfg
+    
+    echo "Réparation GRUB rapide terminée"
 }
 
 # Préparations des partitions - CORRIGÉE
@@ -1259,7 +1517,7 @@ main() {
     mount_partitions            # Montage des partitions
     install_base                # Installation du système de base
     #configure_system            # Configuration des paramètres système
-    configure_system_enhanced # Configuration des paramètres système avancées
+    configure_system_enhanced() # Configuration des paramètres système avancées
     install_gui                 # Installation de l'environnement graphique
     install_additional_packages # Ajout paquets additionnels cli
     install_additional_packages_menu  # Ajout paquets additionnels menu
