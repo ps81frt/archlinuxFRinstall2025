@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE
@@ -11,7 +11,7 @@
 set -e  # Arrêt du script en cas d'erreur
 
 # Variables globales
-SCRIPT_DIR="$(cd "$(dirname "${ZSH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="/tmp/arch_install.log"
 DISK="/dev/sda"
 USERNAME="cyber"
@@ -840,6 +840,6 @@ main() {
 }
 
 # Point d'entrée du script
-if [[ "${ZSH_SOURCE[0]}" == "${0}" ]]; then
+if [[ $ZSH_EVAL_CONTEXT == *:file ]]; then
     main "$@"
 fi
