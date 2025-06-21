@@ -1,150 +1,275 @@
 #!/bin/bash
+set -euo pipefail
+shopt -s nullglob
 
-set -e
+# --- Fonctions utilitaires ---
 
-# Fonction pour vérifier si une partition est montée
-is_mounted() {
-  mountpoint -q "$1"
+log() {
+    echo -e "\e[1;34m[INFO]\e[0m $*"
 }
 
-# Vérifier que le script est lancé en root
-if [ "$EUID" -ne 0 ]; then
-  echo "Ce script doit être lancé en root !" >&2
-  exit 1
+error() {
+    echo -e "\e[1;31m[ERREUR]\e[0m $*" >&2
+    exit 1
+}
+
+ask() {
+    local prompt="$1"
+    local default="${2:-}"
+    local response
+    if [ -n "$default" ]; then
+        read -rp "$prompt [$default]: " response
+        response="${response:-$default}"
+    else
+        read -rp "$prompt: " response
+    fi
+    echo "$response"
+}
+
+ask_password() {
+    local pass1 pass2
+    while true; do
+        read -rsp "Mot de passe : " pass1
+        echo
+        read -rsp "Confirmez le mot de passe : " pass2
+        echo
+        [[ "$pass1" == "$pass2" ]] && { echo "$pass1"; return 0; }
+        echo "Les mots de passe ne correspondent pas, veuillez réessayer."
+    done
+}
+
+is_mounted() {
+    mountpoint -q "$1"
+}
+
+mount_partition() {
+    local part=$1
+    local mount_point=$2
+
+    if ! [ -b "$part" ]; then
+        error "Partition $part n'existe pas."
+    fi
+
+    if is_mounted "$mount_point"; then
+        log "Le point de montage $mount_point est déjà monté, démontage..."
+        umount -R "$mount_point" || error "Impossible de démonter $mount_point"
+    fi
+
+    mkdir -p "$mount_point"
+    mount "$part" "$mount_point" || error "Montage de $part sur $mount_point échoué."
+    log "Monté $part sur $mount_point"
+}
+
+activate_swap() {
+    local swap_part=$1
+    if ! [ -b "$swap_part" ]; then
+        error "Partition swap $swap_part invalide."
+    fi
+    swapon "$swap_part" || error "Activation swap $swap_part échouée."
+    log "Swap activé sur $swap_part"
+}
+
+detect_boot_mode() {
+    if [ -d /sys/firmware/efi/efivars ]; then
+        echo "uefi"
+    else
+        echo "legacy"
+    fi
+}
+
+install_packages() {
+    local pkgs=("$@")
+    if ! pacman -Sy --noconfirm "${pkgs[@]}"; then
+        error "Installation des paquets ${pkgs[*]} échouée."
+    fi
+}
+
+# --- Début du script principal ---
+
+log "=== Installation interactive Arch Linux ==="
+
+# Choix installation VM ou Hard
+install_type=$(ask "Type d'installation (1) Matériel réel, (2) Machine virtuelle" "1")
+
+vm_pkgs=()
+if [[ "$install_type" == "2" ]]; then
+    vm_choice=$(ask "Choix hyperviseur VM : (1) VirtualBox, (2) QEMU/KVM, (3) VMware" "1")
+    case "$vm_choice" in
+        1) vm_pkgs=(virtualbox-guest-utils) ;;
+        2) vm_pkgs=(qemu-guest-agent) ;;
+        3) vm_pkgs=(open-vm-tools) ;;
+        *) log "Choix hyperviseur invalide, aucun paquet VM installé." ;;
+    esac
 fi
 
-# Vérification de la connexion Internet
-echo "Vérification de la connexion Internet..."
-ping -c 2 archlinux.org > /dev/null 2>&1 || { echo "Pas de connexion Internet détectée."; exit 1; }
-echo "Connexion Internet OK."
+boot_mode=$(detect_boot_mode)
+log "Mode de démarrage détecté : $boot_mode"
 
-# Liste des disques disponibles
-echo "Disques disponibles :"
-lsblk -d -o NAME,SIZE,MODEL
+# Montage partitions
+mount_choice=$(ask "Montage (1) automatique, (2) manuel" "1")
 
-# Demander la partition racine
-read -rp "Entrez la partition racine (ex : /dev/sda2) : " root_partition
+if [[ "$mount_choice" == "1" ]]; then
+    if [[ "$boot_mode" == "uefi" ]]; then
+        part_efi=$(ask "Partition EFI (ex: /dev/sda1)")
+    else
+        part_boot=$(ask "Partition /boot séparée (laisser vide si non)")
+    fi
+    part_root=$(ask "Partition racine / (ex: /dev/sda2)")
+    part_swap=$(ask "Partition swap (laisser vide si pas de swap)")
 
-# Vérifier si la partition existe
-if ! lsblk "$root_partition" > /dev/null 2>&1; then
-  echo "La partition $root_partition n'existe pas." >&2
-  exit 1
-fi
+    # Montage automatique
+    if is_mounted /mnt; then
+        log "/mnt est déjà monté, démontage..."
+        umount -R /mnt || error "Échec démontage /mnt"
+    fi
+    mount_partition "$part_root" /mnt
 
-# Monter la partition racine
-if is_mounted /mnt; then
-  echo "/mnt est déjà monté."
+    if [[ "$boot_mode" == "uefi" ]]; then
+        [ -z "$part_efi" ] && error "Partition EFI requise en mode UEFI."
+        mount_partition "$part_efi" /mnt/boot/efi
+    else
+        if [ -n "$part_boot" ]; then
+            mount_partition "$part_boot" /mnt/boot
+        fi
+    fi
+
+    if [ -n "$part_swap" ]; then
+        activate_swap "$part_swap"
+    fi
+
+elif [[ "$mount_choice" == "2" ]]; then
+    log "Montage manuel :"
+
+    echo "Partitions disponibles :"
+    lsblk -p -o NAME,SIZE,TYPE,MOUNTPOINT
+
+    while true; do
+        line=$(ask "Entrez partition et point de montage (ex: /dev/sda1 /boot), ou 'fin' pour terminer")
+        [[ "$line" == "fin" ]] && break
+        part=$(echo "$line" | awk '{print $1}')
+        mp=$(echo "$line" | awk '{print $2}')
+        if [[ -z "$part" || -z "$mp" ]]; then
+            log "Entrée invalide, réessayez."
+            continue
+        fi
+        mount_partition "$part" "/mnt/${mp#/}"
+    done
+
+    want_swap=$(ask "Activer une partition swap ? (oui/non)" "non")
+    if [[ "$want_swap" =~ ^(oui|o|yes|y)$ ]]; then
+        part_swap=$(ask "Partition swap")
+        activate_swap "$part_swap"
+    fi
 else
-  mount "$root_partition" /mnt || { echo "Erreur : impossible de monter $root_partition"; exit 1; }
+    error "Choix montage invalide."
 fi
 
-# Demander si une partition boot est utilisée
-read -rp "Avez-vous une partition boot séparée ? (oui/non) : " boot_sep
-if [[ "$boot_sep" =~ ^(oui|o|OUI|Oui)$ ]]; then
-  read -rp "Entrez la partition boot (ex : /dev/sda1) : " boot_partition
-  if is_mounted /mnt/boot; then
-    echo "/mnt/boot est déjà monté."
-  else
-    mkdir -p /mnt/boot
-    mount "$boot_partition" /mnt/boot || { echo "Erreur : impossible de monter $boot_partition"; exit 1; }
-  fi
+# Installation de base
+log "Installation de base : base, linux, linux-firmware..."
+install_packages base linux linux-firmware
+
+if [[ "$boot_mode" == "uefi" ]]; then
+    install_packages efibootmgr
+else
+    install_packages grub
 fi
 
-# Demander si une partition EFI est utilisée
-read -rp "Avez-vous une partition EFI (système UEFI) ? (oui/non) : " efi_sep
-if [[ "$efi_sep" =~ ^(oui|o|OUI|Oui)$ ]]; then
-  read -rp "Entrez la partition EFI (ex : /dev/sda1) : " efi_partition
-  if is_mounted /mnt/boot/efi; then
-    echo "/mnt/boot/efi est déjà monté."
-  else
-    mkdir -p /mnt/boot/efi
-    mount "$efi_partition" /mnt/boot/efi || { echo "Erreur : impossible de monter $efi_partition"; exit 1; }
-  fi
-fi
-
-# Mise à jour des miroirs et installation de base
-pacman -Sy --noconfirm archlinux-keyring
-pacstrap /mnt base base-devel linux linux-firmware vim nano networkmanager
-
-# Génération du fstab
+log "Génération du fichier fstab..."
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# Chroot dans le nouveau système
-arch-chroot /mnt /bin/bash <<EOF
+# Configuration chroot
+log "Entrée dans le chroot pour configuration..."
 
-# Configuration de base
+arch-chroot /mnt /bin/bash -c '
+
+set -euo pipefail
+
+echo "Configuration locale et hostname..."
+
 ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime
 hwclock --systohc
+
 echo "fr_FR.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen
+
 echo "LANG=fr_FR.UTF-8" > /etc/locale.conf
-echo "KEYMAP=fr" > /etc/vconsole.conf
 
-# Définir le nom de la machine
-read -rp "Entrez le nom de votre machine : " hostname
+hostname="$(read -rp "Nom de la machine (hostname) : " hn && echo "$hn")"
 echo "$hostname" > /etc/hostname
-echo "127.0.0.1	localhost" > /etc/hosts
-echo "::1		localhost" >> /etc/hosts
-echo "127.0.1.1	$hostname.localdomain	$hostname" >> /etc/hosts
 
-# Installer le bootloader selon la configuration (UEFI ou BIOS)
-if [ -d /sys/firmware/efi/efivars ]; then
-  bootctl install
-  cat <<EOT > /boot/loader/loader.conf
+cat > /etc/hosts <<EOF
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   $hostname.localdomain $hostname
+EOF
+'
+
+# Bootloader dans chroot
+if [[ "$boot_mode" == "uefi" ]]; then
+    log "Installation du bootloader systemd-boot..."
+    arch-chroot /mnt /bin/bash -c '
+        bootctl install
+        cat > /boot/loader/loader.conf <<EOF
 default arch
 timeout 3
 editor 0
-EOT
-
-  cat <<EOT > /boot/loader/entries/arch.conf
-title Arch Linux
-linux /vmlinuz-linux
-initrd /initramfs-linux.img
-options root=$root_partition rw
-EOT
-else
-  pacman -S --noconfirm grub
-  grub-install --target=i386-pc "$root_partition"
-  grub-mkconfig -o /boot/grub/grub.cfg
-fi
-
-# Demander l'utilisateur final
-read -rp "Entrez le nom d'utilisateur à créer : " username
-useradd -m -G wheel -s /bin/bash "$username"
-echo "Définissez le mot de passe pour $username :"
-passwd "$username"
-
-# Autoriser sudo pour les utilisateurs wheel
-pacman -S --noconfirm sudo
-sed -i 's/^# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
-
-# Choix de l'environnement de bureau ou gestionnaire de fenêtres
-echo "Choisissez l'environnement à installer :"
-echo "1) i3"
-echo "2) sway"
-echo "3) hyprland"
-read -rp "Entrez 1, 2 ou 3 : " env_choice
-
-case $env_choice in
-  1)
-    pacman -S --noconfirm xorg xorg-xinit i3 i3status dmenu
-    ;;
-  2)
-    pacman -S --noconfirm sway wayland xorg-xwayland
-    ;;
-  3)
-    pacman -S --noconfirm hyprland wayland xorg-xwayland
-    ;;
-  *)
-    echo "Choix invalide, rien d'installé."
-    ;;
-esac
-
-echo "Installation terminée, vous pouvez redémarrer."
-
 EOF
 
-# Démontage des partitions
-umount -R /mnt
+        root_dev=$(findmnt / -o SOURCE -n)
+        cat > /boot/loader/entries/arch.conf <<EOF
+title   Arch Linux
+linux   /vmlinuz-linux
+initrd  /initramfs-linux.img
+options root=$root_dev rw
+EOF
+    '
+else
+    log "Installation du bootloader GRUB..."
+    arch-chroot /mnt /bin/bash -c '
+        grub-install --target=i386-pc /dev/sda
+        grub-mkconfig -o /boot/grub/grub.cfg
+    '
+fi
 
-echo "Script terminé avec succès."
+# Création utilisateur et configuration sudo dans chroot
+arch-chroot /mnt /bin/bash -c '
+
+set -euo pipefail
+
+username="$(read -rp "Nom d utilisateur à créer : " user && echo "$user")"
+
+while true; do
+    read -rsp "Mot de passe pour $username : " pass1
+    echo
+    read -rsp "Confirmez le mot de passe : " pass2
+    echo
+    [[ "$pass1" == "$pass2" ]] && break
+    echo "Les mots de passe ne correspondent pas, réessayez."
+done
+
+useradd -m -G wheel -s /bin/bash "$username"
+echo "$username:$pass1" | chpasswd
+
+echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
+'
+
+# Installation environnement graphique + paquets VM dans chroot
+log "Choix environnement graphique..."
+
+wm_choice=$(ask "1) sway, 2) hyprland, 3) bspwm" "1")
+
+case "$wm_choice" in
+    1) wm="sway" ;;
+    2) wm="hyprland" ;;
+    3) wm="bspwm" ;;
+    *) wm="sway" ;;
+esac
+
+arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm $wm"
+
+if [[ "${install_type:-1}" == "2" && ${#vm_pkgs[@]} -gt 0 ]]; then
+    log "Installation des paquets VM : ${vm_pkgs[*]}"
+    arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm ${vm_pkgs[*]}"
+fi
+
+log "Installation terminée. Vous pouvez démonter /mnt et redémarrer."
