@@ -1,43 +1,24 @@
 #!/usr/bin/bash
 
 # =============================================================================
-# ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE
+# ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.1-mod
+# Version: 2025.1-corrected
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
-# Compatible UEFI et Legacy BIOS
+# Compatible UEFI et Legacy BIOS - Corrections apportées
 # =============================================================================
 
 set -e  # Arrêt du script en cas d'erreur
 
-
-log() { echo "[INFO] $*"; }
-error_exit() { echo "[ERROR] $*"; exit 1; }
-
-detect_boot_mode() {
-  if [[ -d /sys/firmware/efi/efivars ]]; then
-    BOOT_MODE="uefi"
-  else
-    BOOT_MODE="bios"
-  fi
-  log "Boot mode detected: $BOOT_MODE"
-}
-
-# Détection du dossier du script
-if [[ -n "$BASH_SOURCE" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-elif [[ -n "$ZSH_VERSION" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-else
-  SCRIPT_DIR="$(pwd)"
-fi
+# Variables globales
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/tmp/arch_install.log"
 DISK="/dev/sda"
 USERNAME="cyber"
 HOSTNAME="cyber"
 BOOT_MODE=""
 
-# Fonction de logging
+# Fonctions de logging
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
@@ -59,6 +40,16 @@ error_exit() {
     exit 1
 }
 
+# Détection du mode de boot
+detect_boot_mode() {
+    if [[ -d /sys/firmware/efi/efivars ]]; then
+        BOOT_MODE="uefi"
+    else
+        BOOT_MODE="bios"
+    fi
+    log "Boot mode detected: $BOOT_MODE"
+}
+
 # Fonction de vérification des prérequis
 check_prerequisites() {
     log "=== VERIFICATION DES PREREQUIS ==="
@@ -69,14 +60,9 @@ check_prerequisites() {
     fi
     log_success "Connexion internet OK"
     
-    # Détection du mode de boot (UEFI ou BIOS)
-    if [[ -d /sys/firmware/efi/efivars ]]; then
-        BOOT_MODE="uefi"
-        log_success "Mode UEFI détecté"
-    else
-        BOOT_MODE="bios"
-        log_success "Mode BIOS Legacy détecté"
-    fi
+    # Détection du mode de boot
+    detect_boot_mode
+    log_success "Mode $BOOT_MODE détecté"
     
     # Vérification existence du disque
     if [[ ! -b "$DISK" ]]; then
@@ -104,7 +90,7 @@ auto_partition() {
     log "Mode de boot: $BOOT_MODE"
     
     # Calcul automatique des tailles selon le disque
-    local boot_size="512M"  # Pour BIOS ou EFI
+    local boot_size="512M"
     local swap_size
     local root_size
     local home_size
@@ -113,52 +99,32 @@ auto_partition() {
     if [[ $disk_size_gb -lt 64 ]]; then
         error_exit "Disque trop petit (minimum 64 GB requis)"
     elif [[ $disk_size_gb -le 128 ]]; then
-        # Disque <= 128 GB
         swap_size="2G"
         root_size="30G"
         has_separate_home=false
         log "Configuration petit disque (≤128 GB):"
-        if [[ $BOOT_MODE == "uefi" ]]; then
-            log "  EFI: $boot_size, SWAP: $swap_size, ROOT: $root_size (avec /home intégré)"
-        else
-            log "  BOOT: $boot_size, SWAP: $swap_size, ROOT: $root_size (avec /home intégré)"
-        fi
+        log "  $(if [[ $BOOT_MODE == "uefi" ]]; then echo "EFI"; else echo "BOOT"; fi): $boot_size, SWAP: $swap_size, ROOT: $root_size (avec /home intégré)"
         log "  DATA: Reste du disque (~$((disk_size_gb - 33)) GB)"
     elif [[ $disk_size_gb -le 256 ]]; then
-        # Disque <= 256 GB
         swap_size="4G"
         root_size="50G"
         home_size="$((disk_size_gb - 80))G"
         log "Configuration disque moyen (≤256 GB):"
-        if [[ $BOOT_MODE == "uefi" ]]; then
-            log "  EFI: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        else
-            log "  BOOT: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        fi
+        log "  $(if [[ $BOOT_MODE == "uefi" ]]; then echo "EFI"; else echo "BOOT"; fi): $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
         log "  DATA: Reste du disque (~25 GB)"
     elif [[ $disk_size_gb -le 512 ]]; then
-        # Disque <= 512 GB
         swap_size="8G"
         root_size="60G"
         home_size="200G"
         log "Configuration disque moyen-grand (≤512 GB):"
-        if [[ $BOOT_MODE == "uefi" ]]; then
-            log "  EFI: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        else
-            log "  BOOT: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        fi
+        log "  $(if [[ $BOOT_MODE == "uefi" ]]; then echo "EFI"; else echo "BOOT"; fi): $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
         log "  DATA: Reste du disque (~$((disk_size_gb - 269)) GB)"
     else
-        # Disque > 512 GB
         swap_size="16G"
         root_size="80G"
         home_size="300G"
         log "Configuration grand disque (>512 GB):"
-        if [[ $BOOT_MODE == "uefi" ]]; then
-            log "  EFI: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        else
-            log "  BOOT: $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
-        fi
+        log "  $(if [[ $BOOT_MODE == "uefi" ]]; then echo "EFI"; else echo "BOOT"; fi): $boot_size, SWAP: $swap_size, ROOT: $root_size, HOME: $home_size"
         log "  DATA: Reste du disque (~$((disk_size_gb - 397)) GB)"
     fi
     
@@ -182,7 +148,7 @@ auto_partition() {
     echo "$BOOT_MODE" > /tmp/boot_mode
 }
 
-# Partitionnement UEFI (GPT)
+# Partitionnement UEFI (GPT) - CORRIGÉ
 partition_uefi() {
     local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
     
@@ -190,6 +156,9 @@ partition_uefi() {
     
     # Nettoyage du disque
     sgdisk --zap-all "$disk" || error_exit "Échec du nettoyage du disque"
+    
+    # Attendre que les changements soient pris en compte
+    sleep 2
     
     # Création des partitions avec sgdisk
     if [[ $has_separate_home == false ]]; then
@@ -212,94 +181,102 @@ partition_uefi() {
     fi
     
     # Attendre que le kernel reconnaisse les nouvelles partitions
-    sleep 2
+    sleep 3
     partprobe "$disk"
     sleep 2
 }
 
-# Partitionnement BIOS (MBR)
+# Partitionnement BIOS (MBR) - CORRIGÉ
 partition_bios() {
     local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
     
     log "Partitionnement BIOS/MBR..."
     
     # Nettoyage du disque
+    wipefs -af "$disk" || true
     dd if=/dev/zero of="$disk" bs=512 count=1 2>/dev/null || true
     
-    # Création de la table de partition MBR avec fdisk
+    # Attendre
+    sleep 2
+    
+    # Création de la table de partition MBR avec fdisk - CORRIGÉ
     if [[ $has_separate_home == false ]]; then
-        # Configuration sans partition home séparée
-        fdisk "$disk" << EOF
-n
-p
-1
-
-+$boot_size
-a
-1
-n
-p
-2
-
-+$swap_size
-n
-p
-3
-
-+$root_size
-n
-p
-
-
-t
-2
-82
-w
-EOF
+        # Configuration sans partition home séparée (4 partitions primaires)
+        {
+            echo o      # Nouvelle table de partition DOS
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 1      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$boot_size  # Dernier secteur
+            echo a      # Activer le flag bootable
+            echo 1      # Sur la partition 1
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 2      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$swap_size  # Dernier secteur
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 3      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$root_size  # Dernier secteur
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 4      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo        # Dernier secteur (reste du disque)
+            echo t      # Changer type de partition
+            echo 2      # Partition 2
+            echo 82     # Type Linux swap
+            echo w      # Écrire les changements
+        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
     else
         # Configuration avec partition home (utilisation de partitions étendues)
-        fdisk "$disk" << EOF
-n
-p
-1
-
-+$boot_size
-a
-1
-n
-p
-2
-
-+$swap_size
-n
-p
-3
-
-+$root_size
-n
-e
-
-
-n
-
-+$home_size
-n
-
-
-t
-2
-82
-w
-EOF
+        {
+            echo o      # Nouvelle table de partition DOS
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 1      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$boot_size  # Dernier secteur
+            echo a      # Activer le flag bootable
+            echo 1      # Sur la partition 1
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 2      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$swap_size  # Dernier secteur
+            echo n      # Nouvelle partition
+            echo p      # Primaire
+            echo 3      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo +$root_size  # Dernier secteur
+            echo n      # Nouvelle partition
+            echo e      # Étendue
+            echo 4      # Numéro de partition
+            echo        # Premier secteur (défaut)
+            echo        # Dernier secteur (reste du disque)
+            echo n      # Nouvelle partition logique
+            echo        # Premier secteur (défaut)
+            echo +$home_size  # Dernier secteur
+            echo n      # Nouvelle partition logique
+            echo        # Premier secteur (défaut)
+            echo        # Dernier secteur (reste de l'étendue)
+            echo t      # Changer type de partition
+            echo 2      # Partition 2
+            echo 82     # Type Linux swap
+            echo w      # Écrire les changements
+        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
     fi
     
     # Attendre que le kernel reconnaisse les nouvelles partitions
-    sleep 2
+    sleep 3
     partprobe "$disk"
     sleep 2
 }
 
-# Fonction de partitionnement manuel
+# Fonction de partitionnement manuel - CORRIGÉE
 manual_partition() {
     local disk=$1
     
@@ -460,51 +437,43 @@ partition_menu() {
     esac
 }
 
-# Formatage des partitions
-# Détection automatique du mode de boot si /tmp/boot_mode absent
-detect_boot_mode() {
-    if [[ -d /sys/firmware/efi/efivars ]]; then
-        echo "uefi"
-    else
-        echo "bios"
-    fi
-}
-
-# ¨Preparations des partitions
+# Préparations des partitions - CORRIGÉE
 prepare_disk_for_format() {
     log "Préparation du disque pour formatage..."
 
-    # Deactivate swap on any partitions of the disk
-    for swapdev in $(swapon --show=NAME --noheadings | grep "^${DISK}"); do
+    # Désactiver swap sur toutes les partitions du disque
+    for swapdev in $(swapon --show=NAME --noheadings 2>/dev/null | grep "^${DISK}" || true); do
         log "Désactivation du swap sur $swapdev"
-        swapoff "$swapdev" || error_exit "Échec désactivation swap"
+        swapoff "$swapdev" 2>/dev/null || true
     done
 
-    # Unmount all mounted partitions on the disk
-    for part in $(lsblk -ln -o NAME,MOUNTPOINT | grep "^$(basename $DISK)" | awk '$2!="" {print $1}'); do
-        log "Démontage de /dev/$part"
-        umount "/dev/$part" || error_exit "Échec démontage /dev/$part"
+    # Démonter toutes les partitions montées du disque
+    for mountpoint in $(lsblk -ln -o NAME,MOUNTPOINT | grep "^$(basename $DISK)" | awk '$2!="" {print $2}' | tac); do
+        if [[ -n "$mountpoint" ]]; then
+            log "Démontage de $mountpoint"
+            umount "$mountpoint" 2>/dev/null || true
+        fi
     done
 
     log "Disque prêt pour formatage"
 }
-# Formatage des partitions
+
+# Formatage des partitions - CORRIGÉ
 format_partitions() {
     log "=== FORMATAGE DES PARTITIONS ==="
 
     local has_separate_home="true"
-    local boot_mode="uefi"
+    local boot_mode="$BOOT_MODE"
 
-    # Lecture config temporaire, sinon détection auto
+    # Lecture config temporaire si disponible
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
-    if [[ -f /tmp/boot_mode ]]; then
-        boot_mode=$(cat /tmp/boot_mode)
-    else
-        boot_mode=$(detect_boot_mode)
-    fi
+    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
     log "Mode de boot : $boot_mode"
     log "Partition /home séparée : $has_separate_home"
+
+    # Attendre que les partitions soient reconnues
+    sleep 2
 
     # Formatage partition de démarrage selon mode
     if [[ $boot_mode == "uefi" ]]; then
@@ -526,12 +495,14 @@ format_partitions() {
     # Home et data selon mode et séparé ou non
     if [[ $has_separate_home == "true" ]]; then
         if [[ $boot_mode == "bios" ]]; then
+            # En BIOS avec home séparé: partitions logiques 5 et 6
             log "Formatage home ${DISK}5..."
             mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage home"
 
             log "Formatage data ${DISK}6..."
             mkfs.ext4 -F "${DISK}6" || error_exit "Échec formatage data"
         else
+            # En UEFI avec home séparé: partitions 4 et 5
             log "Formatage home ${DISK}4..."
             mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage home"
 
@@ -539,9 +510,10 @@ format_partitions() {
             mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage data"
         fi
     else
+        # Sans home séparée
         if [[ $boot_mode == "bios" ]]; then
-            log "Formatage data ${DISK}5 (pas de home séparé)..."
-            mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage data"
+            log "Formatage data ${DISK}4 (pas de home séparé)..."
+            mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage data"
         else
             log "Formatage data ${DISK}4 (pas de home séparé)..."
             mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage data"
@@ -551,44 +523,47 @@ format_partitions() {
     log "Formatage terminé"
 }
 
-# Montage des partitions
+# Montage des partitions - CORRIGÉ
 mount_partitions() {
     log "=== MONTAGE DES PARTITIONS ==="
 
     local has_separate_home="true"
-    local boot_mode="uefi"
+    local boot_mode="$BOOT_MODE"
 
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
-    if [[ -f /tmp/boot_mode ]]; then
-        boot_mode=$(cat /tmp/boot_mode)
-    else
-        boot_mode=$(detect_boot_mode)
-    fi
+    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
     log "Mode de boot : $boot_mode"
     log "Partition /home séparée : $has_separate_home"
 
-    log "Activation swap ${DISK}2..."
-    swapon "${DISK}2" || error_exit "Échec activation swap"
-
+    # Montage root en premier
     log "Montage root ${DISK}3 sur /mnt..."
     mount "${DISK}3" /mnt || error_exit "Échec montage root"
 
+    # Activation swap
+    log "Activation swap ${DISK}2..."
+    swapon "${DISK}2" || error_exit "Échec activation swap"
+
+    # Création des points de montage
     mkdir -p /mnt/{boot,data}
 
+    # Montage boot
+    log "Montage boot ${DISK}1 sur /mnt/boot..."
+    mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
+
+    # Montage home et data selon configuration
     if [[ $has_separate_home == "true" ]]; then
         mkdir -p /mnt/home
 
-        log "Montage boot ${DISK}1 sur /mnt/boot..."
-        mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
-
         if [[ $boot_mode == "bios" ]]; then
+            # BIOS avec home séparé: partitions logiques
             log "Montage home ${DISK}5 sur /mnt/home..."
             mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
 
             log "Montage data ${DISK}6 sur /mnt/data..."
             mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
         else
+            # UEFI avec home séparé
             log "Montage home ${DISK}4 sur /mnt/home..."
             mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
 
@@ -596,24 +571,14 @@ mount_partitions() {
             mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
         fi
     else
-        log "Pas de /home séparée, montage boot et data..."
-
-        log "Montage boot ${DISK}1 sur /mnt/boot..."
-        mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
-
-        if [[ $boot_mode == "bios" ]]; then
-            log "Montage data ${DISK}5 sur /mnt/data..."
-            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
-        else
-            log "Montage data ${DISK}4 sur /mnt/data..."
-            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
-        fi
+        # Sans home séparée
+        log "Montage data ${DISK}4 sur /mnt/data..."
+        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
     fi
 
     log "Montage terminé"
     lsblk
 }
-
 
 # Installation de base
 install_base() {
@@ -638,17 +603,15 @@ install_base() {
     log "Installation de base terminée"
 }
 
-# Configuration système dans chroot
+# Configuration système dans chroot - CORRIGÉE
 configure_system() {
     log "=== CONFIGURATION SYSTÈME ==="
     
-    local boot_mode="uefi"
-    if [[ -f /tmp/boot_mode ]]; then
-        boot_mode=$(cat /tmp/boot_mode)
-    fi
+    local boot_mode="$BOOT_MODE"
+    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
     
     # Copie du script pour continuer en chroot
-    cp "$0" /mnt/root/
+    cp "$0" /mnt/root/ 2>/dev/null || true
     cp "$LOG_FILE" /mnt/root/ 2>/dev/null || true
     echo "$boot_mode" > /mnt/root/boot_mode
     
@@ -694,13 +657,22 @@ EOF
     if [[ \$BOOT_MODE == "uefi" ]]; then
         echo "Configuration GRUB pour UEFI..."
         pacman -S --noconfirm efibootmgr
-        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB || {
+            echo "Erreur: Échec installation GRUB UEFI"
+            exit 1
+        }
     else
         echo "Configuration GRUB pour BIOS..."
-        grub-install --target=i386-pc $DISK
+        grub-install --target=i386-pc $DISK || {
+            echo "Erreur: Échec installation GRUB BIOS"
+            exit 1
+        }
     fi
     
-    grub-mkconfig -o /boot/grub/grub.cfg
+    grub-mkconfig -o /boot/grub/grub.cfg || {
+        echo "Erreur: Échec génération config GRUB"
+        exit 1
+    }
     
     # Installation des outils supplémentaires
     pacman -S --noconfirm iw wpa_supplicant dialog git reflector lshw unzip htop
@@ -746,7 +718,7 @@ install_gui() {
 [greeter]
 theme-name = Arc-Dark
 icon-theme-name = Papirus-Dark
-background = #2f343f
+background = #2f343
 EOF
     
     # Gestion de l'alimentation et optimisations
@@ -869,7 +841,12 @@ main() {
     log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
 
+    detect_boot_mode
     check_prerequisites
+    auto_partition
+    partition_uefi
+    partition_bios
+    manual_partition
     partition_menu
     prepare_disk_for_format
     format_partitions
@@ -878,6 +855,7 @@ main() {
     configure_system
     install_gui
     setup_user
+    cleanup
     create_post_install_script
 
     log "=== INSTALLATION TERMINEE ==="
