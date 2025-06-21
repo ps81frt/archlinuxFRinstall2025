@@ -1,5 +1,4 @@
 #!/usr/bin/env zsh
-
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE
 # =============================================================================
@@ -7,9 +6,7 @@
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
 # Compatible UEFI et Legacy BIOS
 # =============================================================================
-
 set -e  # Arrêt du script en cas d'erreur
-
 # Variables globales
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DISK="/dev/sda"
