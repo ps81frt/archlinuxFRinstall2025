@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/usr/bin/bash
 
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE
@@ -10,8 +10,14 @@
 
 set -e  # Arrêt du script en cas d'erreur
 
-# Variables globales
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Détection du dossier du script
+if [[ -n "$BASH_SOURCE" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elif [[ -n "$ZSH_VERSION" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+  SCRIPT_DIR="$(pwd)"
+fi
 LOG_FILE="/tmp/arch_install.log"
 DISK="/dev/sda"
 USERNAME="cyber"
@@ -802,7 +808,7 @@ POST_EOF
 main() {
     log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
-    
+
     check_prerequisites
     partition_menu
     format_partitions
@@ -812,7 +818,7 @@ main() {
     install_gui
     setup_user
     create_post_install_script
-    
+
     log "=== INSTALLATION TERMINEE ==="
     echo ""
     echo "=============================================================="
@@ -820,15 +826,15 @@ main() {
     echo "=============================================================="
     echo "  Mode de boot: $BOOT_MODE"
     echo "  1. Redémarrez le système: reboot                           "
-    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME               "
+    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME           "
     echo "  3. Exécutez le script post-installation:                   "
     echo "     ./post_install.sh                                       "
     echo "                                                              "
-    echo "  Log sauvegardé dans: /root/arch_install.log             "
-     echo "  N'oubliez pas de donner une étoile sur GitHub !         "
+    echo "  Log sauvegardé dans: /root/arch_install.log                 "
+    echo "  N'oubliez pas de donner une étoile sur GitHub !             "
     echo "=============================================================="
     echo ""
-    
+
     read -p "Voulez-vous redémarrer maintenant? [y/N]: " reboot_confirm
     if [[ $reboot_confirm == [yY] ]]; then
         cleanup
@@ -839,7 +845,13 @@ main() {
     fi
 }
 
-# Point d'entrée du script
-if [[ $ZSH_EVAL_CONTEXT == *:file ]]; then
+# Point d'entrée du script, compatible Bash et Zsh
+if [[ -n "$ZSH_VERSION" ]]; then
+    # Zsh : on vérifie le contexte pour ne pas lancer si script est "sourcé"
+    if [[ $ZSH_EVAL_CONTEXT == *:file ]]; then
+        main "$@"
+    fi
+else
+    # Bash (ou autre) : on lance direct
     main "$@"
 fi
