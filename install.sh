@@ -229,7 +229,7 @@ partition_bios() {
             echo        # Premier secteur (défaut)
             echo        # Dernier secteur (reste du disque)
             echo t      # Changer type de partition
-            echo 2      # Partition 2
+            echo 2      # Partition 2 (swap)
             echo 82     # Type Linux swap
             echo w      # Écrire les changements
         } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
@@ -237,37 +237,46 @@ partition_bios() {
         # Configuration avec partition home (utilisation de partitions étendues)
         {
             echo o      # Nouvelle table de partition DOS
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 1      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$boot_size  # Dernier secteur
+            echo n      # Nouvelle partition primaire 1 (boot)
+            echo p
+            echo 1
+            echo
+            echo +$boot_size
             echo a      # Activer le flag bootable
-            echo 1      # Sur la partition 1
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 2      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$swap_size  # Dernier secteur
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 3      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$root_size  # Dernier secteur
-            echo n      # Nouvelle partition
-            echo e      # Étendue
-            echo 4      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo        # Dernier secteur (reste du disque)
-            echo n      # Nouvelle partition logique
-            echo        # Premier secteur (défaut)
-            echo +$home_size  # Dernier secteur
-            echo n      # Nouvelle partition logique
-            echo        # Premier secteur (défaut)
-            echo        # Dernier secteur (reste de l'étendue)
-            echo t      # Changer type de partition
-            echo 2      # Partition 2
-            echo 82     # Type Linux swap
+            echo 1
+
+            echo n      # Nouvelle partition primaire 2 (swap)
+            echo p
+            echo 2
+            echo
+            echo +$swap_size
+
+            echo n      # Nouvelle partition primaire 3 (root)
+            echo p
+            echo 3
+            echo
+            echo +$root_size
+
+            echo n      # Nouvelle partition étendue 4
+            echo e
+            echo 4
+            echo
+            echo
+
+            echo n      # Nouvelle partition logique 5 (home)
+            echo        # Laisser vide pour numéro automatique
+            echo        # Premier secteur par défaut
+            echo +$home_size
+
+            echo n      # Nouvelle partition logique 6 (data)
+            echo        # Laisser vide pour numéro automatique
+            echo        # Premier secteur par défaut
+            echo        # Dernier secteur par défaut (reste)
+
+            echo t      # Changer type de partition (swap)
+            echo 2
+            echo 82
+
             echo w      # Écrire les changements
         } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
     fi
@@ -277,6 +286,7 @@ partition_bios() {
     partprobe "$disk"
     sleep 2
 }
+
 
 # Fonction de partitionnement manuel - CORRIGÉE
 manual_partition() {
