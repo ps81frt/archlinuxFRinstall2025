@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE
