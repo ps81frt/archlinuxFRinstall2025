@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# V.48
+# V.49
 # === Debug ===
 debug() {
   echo "[DEBUG] $1"
@@ -247,4 +247,73 @@ install_extra_packages() {
   echo "Installation de paquets supplémentaires..."
   echo "Entrez les paquets à installer séparés par des espaces (laisser vide pour aucun):"
   read -r extras
-  if [[ -n
+  if [[ -n "$extras" ]]; then
+    arch-chroot /mnt pacman -S --noconfirm $extras
+  else
+    echo "Aucun paquet supplémentaire à installer."
+  fi
+}
+
+# === Démontage final ===
+finalize() {
+  echo "Démontage des partitions..."
+  umount -R /mnt || echo "Erreur de démontage"
+  echo "Installation terminée."
+}
+
+# === MAIN ===
+main() {
+  echo "Détection du mode de boot..."
+  boot_mode=$(detect_boot_mode)
+  echo "Mode de boot détecté : $boot_mode"
+
+  disk=$(choose_disk)
+  echo "Disque choisi : $disk"
+
+  check_and_unmount "$disk"
+
+  root_partition=$(choose_partition "$disk")
+  echo "Partition racine choisie : $root_partition"
+
+  # Demander partitions optionnelles
+  echo "Entrez la partition /boot (laisser vide si pas séparée) :"
+  read -r boot_partition
+
+  echo "Entrez la partition /home (laisser vide si pas séparée) :"
+  read -r home_partition
+
+  echo "Entrez la partition /var (laisser vide si pas séparée) :"
+  read -r var_partition
+
+  echo "Entrez la partition /tmp (laisser vide si pas séparée) :"
+  read -r tmp_partition
+
+  echo "Entrez la partition /data (laisser vide si pas séparée) :"
+  read -r data_partition
+
+  echo "Montage des partitions..."
+  mount_partitions "$boot_partition" "$root_partition" "$home_partition" "$var_partition" "$tmp_partition" "$data_partition"
+
+  echo "Installation de la base système..."
+  install_base
+
+  echo "Configuration système..."
+  hostname=$(ask "Nom de la machine" "archlinux")
+  username=$(ask "Nom de l'utilisateur")
+  userpass=$(ask "Mot de passe de l'utilisateur")
+  rootpass=$(ask "Mot de passe root")
+
+  configure_system "$hostname" "$username" "$userpass" "$rootpass" "$boot_mode" "$disk"
+
+  echo "Choisissez un environnement de bureau:"
+  echo "Options: hyprland, gnome, kde, xfce, minimal"
+  read -r desktop_env
+
+  install_desktop_env "$desktop_env"
+
+  install_extra_packages
+
+  finalize
+}
+
+main "$@"
