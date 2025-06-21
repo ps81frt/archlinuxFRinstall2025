@@ -1515,7 +1515,7 @@ main() {
     log "=== DÉBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
 
-    # Étapes de base de l'installation
+    # Étapes principales
     check_prerequisites
     partition_menu
     prepare_disk_for_format
@@ -1527,8 +1527,6 @@ main() {
     install_additional_packages
     install_additional_packages_menu
 
-    # === Création utilisateur dans le chroot ===
-
     # Demande interactive des identifiants utilisateur
     read -p "Nom d'utilisateur : " USERNAME
     read -sp "Entrez le mot de passe pour $USERNAME : " PASSWORD
@@ -1537,16 +1535,18 @@ main() {
     echo
 
     if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
-        echo "❌ Les mots de passe ne correspondent pas."
+        echo "Les mots de passe ne correspondent pas."
         exit 1
     fi
 
     log "Création du script setup_user.sh dans le chroot..."
 
-    # Création dynamique du script à exécuter dans le chroot
-    cat <<EOF > /mnt/root/setup_user.sh
+    cat <<'EOF' > /mnt/root/setup_user.sh
 #!/bin/bash
 set -e
+
+USERNAME="$1"
+PASSWORD="$2"
 
 useradd -m -G wheel "$USERNAME"
 echo "$USERNAME:$PASSWORD" | chpasswd
@@ -1557,15 +1557,13 @@ EOF
     chmod +x /mnt/root/setup_user.sh
 
     log "Exécution du script utilisateur dans le chroot..."
-    arch-chroot /mnt /root/setup_user.sh || error_exit "❌ Échec de la création de l'utilisateur"
+    arch-chroot /mnt /root/setup_user.sh "$USERNAME" "$PASSWORD" || error_exit "Échec de la création de l'utilisateur"
 
     log "Nettoyage du script temporaire..."
     rm /mnt/root/setup_user.sh
 
-    # Création script post-install
     create_post_install_script
 
-    # Message final
     log "=== INSTALLATION TERMINÉE ==="
     echo ""
     echo "=============================================================="
@@ -1578,7 +1576,6 @@ EOF
     echo "     ./post_install.sh                                       "
     echo "                                                              "
     echo "  Log sauvegardé dans: /root/arch_install.log                 "
-    echo "  N'oubliez pas de donner une étoile sur GitHub !             "
     echo "=============================================================="
     echo ""
 
@@ -1591,6 +1588,7 @@ EOF
         log "Redémarrage annulé. N'oubliez pas de redémarrer manuellement."
     fi
 }
+
 # Point d'entrée du script, compatible Bash et Zsh
 if [[ -n "$ZSH_VERSION" ]]; then
     # Zsh : on vérifie le contexte pour ne pas lancer si script est "sourcé"
