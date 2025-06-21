@@ -10,6 +10,19 @@
 
 set -e  # Arrêt du script en cas d'erreur
 
+
+log() { echo "[INFO] $*"; }
+error_exit() { echo "[ERROR] $*"; exit 1; }
+
+detect_boot_mode() {
+  if [[ -d /sys/firmware/efi/efivars ]]; then
+    BOOT_MODE="uefi"
+  else
+    BOOT_MODE="bios"
+  fi
+  log "Boot mode detected: $BOOT_MODE"
+}
+
 # Détection du dossier du script
 if [[ -n "$BASH_SOURCE" ]]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -448,59 +461,71 @@ partition_menu() {
 }
 
 # Formatage des partitions
+# Détection automatique du mode de boot si /tmp/boot_mode absent
+detect_boot_mode() {
+    if [[ -d /sys/firmware/efi/efivars ]]; then
+        echo "uefi"
+    else
+        echo "bios"
+    fi
+}
+
+# Formatage des partitions
 format_partitions() {
     log "=== FORMATAGE DES PARTITIONS ==="
 
     local has_separate_home="true"
     local boot_mode="uefi"
 
-    # Lire la configuration depuis les fichiers temporaires
+    # Lecture config temporaire, sinon détection auto
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
-    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
+    if [[ -f /tmp/boot_mode ]]; then
+        boot_mode=$(cat /tmp/boot_mode)
+    else
+        boot_mode=$(detect_boot_mode)
+    fi
 
-    # Formatage de la partition de démarrage
+    log "Mode de boot : $boot_mode"
+    log "Partition /home séparée : $has_separate_home"
+
+    # Formatage partition de démarrage selon mode
     if [[ $boot_mode == "uefi" ]]; then
-        log "Formatage de la partition EFI..."
+        log "Formatage de la partition EFI ${DISK}1..."
         mkfs.fat -F32 "${DISK}1" || error_exit "Échec formatage EFI"
     else
-        log "Formatage de la partition /boot..."
+        log "Formatage de la partition /boot ${DISK}1..."
         mkfs.ext4 -F "${DISK}1" || error_exit "Échec formatage /boot"
     fi
 
-    # Partition swap (commune à tous les modes)
-    log "Configuration du swap..."
+    # Swap commun
+    log "Configuration du swap ${DISK}2..."
     mkswap "${DISK}2" || error_exit "Échec configuration swap"
 
-    # Partition root
-    log "Formatage de la partition root..."
+    # Root commun
+    log "Formatage de la partition root ${DISK}3..."
     mkfs.ext4 -F "${DISK}3" || error_exit "Échec formatage root"
 
-    # Partitions home et data selon le mode et le partitionnement
+    # Home et data selon mode et séparé ou non
     if [[ $has_separate_home == "true" ]]; then
         if [[ $boot_mode == "bios" ]]; then
-            # BIOS : home = ${DISK}5, data = ${DISK}6
-            log "Formatage de la partition home..."
+            log "Formatage home ${DISK}5..."
             mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage home"
 
-            log "Formatage de la partition data..."
+            log "Formatage data ${DISK}6..."
             mkfs.ext4 -F "${DISK}6" || error_exit "Échec formatage data"
         else
-            # UEFI : home = ${DISK}4, data = ${DISK}5
-            log "Formatage de la partition home..."
+            log "Formatage home ${DISK}4..."
             mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage home"
 
-            log "Formatage de la partition data..."
+            log "Formatage data ${DISK}5..."
             mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage data"
         fi
     else
-        # Sans partition /home séparée
         if [[ $boot_mode == "bios" ]]; then
-            # BIOS : data = ${DISK}5
-            log "Formatage de la partition data..."
+            log "Formatage data ${DISK}5 (pas de home séparé)..."
             mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage data"
         else
-            # UEFI : data = ${DISK}4
-            log "Formatage de la partition data..."
+            log "Formatage data ${DISK}4 (pas de home séparé)..."
             mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage data"
         fi
     fi
@@ -511,57 +536,66 @@ format_partitions() {
 # Montage des partitions
 mount_partitions() {
     log "=== MONTAGE DES PARTITIONS ==="
-    
+
     local has_separate_home="true"
     local boot_mode="uefi"
-    
-    if [[ -f /tmp/has_separate_home ]]; then
-        has_separate_home=$(cat /tmp/has_separate_home)
-    fi
-    
+
+    [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     if [[ -f /tmp/boot_mode ]]; then
         boot_mode=$(cat /tmp/boot_mode)
+    else
+        boot_mode=$(detect_boot_mode)
     fi
-    
-    # Activation du swap
-    log "Activation du swap..."
+
+    log "Mode de boot : $boot_mode"
+    log "Partition /home séparée : $has_separate_home"
+
+    log "Activation swap ${DISK}2..."
     swapon "${DISK}2" || error_exit "Échec activation swap"
-    
-    # Montage de la partition root
-    log "Montage de la partition root..."
+
+    log "Montage root ${DISK}3 sur /mnt..."
     mount "${DISK}3" /mnt || error_exit "Échec montage root"
-    
-    # Création des points de montage
+
     mkdir -p /mnt/{boot,data}
-    
+
     if [[ $has_separate_home == "true" ]]; then
         mkdir -p /mnt/home
-        log "Configuration normale: partition /home séparée"
-        
-        # Montage des partitions selon le mode de boot
-        log "Montage des partitions..."
+
+        log "Montage boot ${DISK}1 sur /mnt/boot..."
         mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
-        
+
         if [[ $boot_mode == "bios" ]]; then
-            # Partitions étendues en BIOS
+            log "Montage home ${DISK}5 sur /mnt/home..."
             mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
+
+            log "Montage data ${DISK}6 sur /mnt/data..."
             mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
         else
-            # Partitions normales en UEFI
+            log "Montage home ${DISK}4 sur /mnt/home..."
             mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
+
+            log "Montage data ${DISK}5 sur /mnt/data..."
             mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
         fi
     else
-        log "Configuration petit disque: /home intégré dans /"
-        
-        log "Montage des partitions..."
+        log "Pas de /home séparée, montage boot et data..."
+
+        log "Montage boot ${DISK}1 sur /mnt/boot..."
         mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
-        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+
+        if [[ $boot_mode == "bios" ]]; then
+            log "Montage data ${DISK}5 sur /mnt/data..."
+            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
+        else
+            log "Montage data ${DISK}4 sur /mnt/data..."
+            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+        fi
     fi
-    
+
     log "Montage terminé"
     lsblk
 }
+
 
 # Installation de base
 install_base() {
