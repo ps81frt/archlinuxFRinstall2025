@@ -1275,25 +1275,21 @@ CHROOT_EOF
 }
 
 setup_user() {
-    log "=== CONFIGURATION UTILISATEUR ==="
-    
-    # Création utilisateur et configuration sudo (sans passwd)
-    arch-chroot /mnt /bin/bash << CHROOT_EOF
-    
-    # Création utilisateur
-    useradd -m -g users -G wheel,storage,power,audio $USERNAME
-    
-    # Configuration sudo
-    sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
-    
-CHROOT_EOF
-    
-    # Configuration mot de passe utilisateur INTERACTIVE
-    log "Configuration du mot de passe pour l'utilisateur $USERNAME:"
-    echo "Configuration du mot de passe pour l'utilisateur $USERNAME:"
-    arch-chroot /mnt passwd $USERNAME
-    
-    log "Configuration utilisateur terminée"
+    read -p "Nom d'utilisateur : " USERNAME
+    read -sp "Entrez le mot de passe pour $USERNAME : " PASSWORD
+    echo
+    read -sp "Confirmez le mot de passe : " PASSWORD_CONFIRM
+    echo
+
+    if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
+        echo "Les mots de passe ne correspondent pas."
+        exit 1
+    fi
+
+    useradd -m -G wheel "$USERNAME"
+    echo "$USERNAME:$PASSWORD" | chpasswd
+
+    sed -i '/%wheel ALL=(ALL) ALL/s/^# //' /etc/sudoers
 }
 
 # Nettoyage final
