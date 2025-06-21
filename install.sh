@@ -767,10 +767,10 @@ fi
 echo "Installation des paquets audio..."
 yay -S --noconfirm pa-applet-git
 
-# Configuration shell bash
-echo "Configuration du shell bash..."
-sudo pacman -S --noconfirm bash
-chsh -s /bin/bash
+# Configuration shell zsh
+echo "Configuration du shell zsh..."
+sudo pacman -S --noconfirm zsh
+chsh -s /bin/zsh
 
 # Configuration utilisateur
 echo "Configuration des dossiers utilisateur..."
