@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.20-corrected
+# Version: 2025.1-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -1394,86 +1394,8 @@ CHROOT_EOF
     fi
 }
 
-# Configuration utilisateur - CORRIGÉE
-setup_user() {
-    log "=== CONFIGURATION UTILISATEUR ==="
-    
-    local username_file="/mnt/root/username_info"
-    local username="$USERNAME"
-    [[ -f "$username_file" ]] && username=$(cat "$username_file")
-    
-    arch-chroot /mnt /bin/bash << CHROOT_EOF
-set -e
-
-USERNAME=$(cat /root/username_info 2>/dev/null || echo "cyber")
-
-echo "Configuration de l'utilisateur: $USERNAME"
-
-# Vérification si l'utilisateur existe déjà
-if id "$USERNAME" &>/dev/null; then
-    echo "L'utilisateur $USERNAME existe déjà, suppression..."
-    userdel -r "$USERNAME" 2>/dev/null || true
-fi
-
-# Création utilisateur avec tous les groupes nécessaires
-echo "Création de l'utilisateur $USERNAME..."
-useradd -m -g users -G wheel,storage,power,audio,video,optical,lp,scanner "$USERNAME" || {
-    echo "Erreur: Échec création utilisateur"
-    exit 1
-}
-
-# Configuration du mot de passe utilisateur
-echo "Configuration du mot de passe pour $USERNAME:"
-echo "Mot de passe par défaut: $USERNAME"
-echo "$USERNAME:$USERNAME" | chpasswd
-
-# Configuration sudo
-echo "Configuration des droits sudo..."
-sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers || {
-    echo "Erreur: Configuration sudo échouée"
-    exit 1
-}
-
-# Configuration du mot de passe root
-echo "Configuration du mot de passe root:"
-echo "Mot de passe par défaut: root"
-echo "root:root" | chpasswd
-
-# Création des dossiers utilisateur de base
-echo "Création des dossiers utilisateur..."
-su - "$USERNAME" -c "mkdir -p ~/Documents ~/Downloads ~/Pictures ~/Videos ~/Music" || true
-
-# Configuration shell par défaut
-echo "Configuration du shell..."
-chsh -s /bin/bash "$USERNAME" || echo "Attention: Shell non configuré"
-
-# Permissions sur le dossier home
-chown -R "$USERNAME":users "/home/$USERNAME"
-chmod 755 "/home/$USERNAME"
-
-echo "Configuration utilisateur terminée"
-echo ""
-echo "INFORMATIONS DE CONNEXION:"
-echo "=========================="
-echo "Utilisateur: $USERNAME"
-echo "Mot de passe: $USERNAME"
-echo ""
-echo "Root:"
-echo "Mot de passe: root"
-echo ""
-echo "ATTENTION: Changez ces mots de passe après la première connexion !"
-
-CHROOT_EOF
-
-    if [[ $? -ne 0 ]]; then
-        error_exit "Échec de la configuration utilisateur"
-    fi
-    
-    log_success "Configuration utilisateur terminée"
-}
 
 # Nettoyage final
-# Nettoyage final - CORRIGÉ
 cleanup() {
     log "=== NETTOYAGE FINAL ==="
     
@@ -1715,63 +1637,204 @@ REPAIR_MENU
     log_success "Menu de réparation GRUB configuré"
 }
 
+# Configuration manuelle du mot de passe root
+setup_root_password() {
+    log "=== CONFIGURATION MOT DE PASSE ROOT ==="
+    
+    echo ""
+    echo "=============================================================="
+    echo "           CONFIGURATION DU MOT DE PASSE ROOT                "
+    echo "=============================================================="
+    echo "Vous allez maintenant définir le mot de passe root"
+    echo "Tapez votre mot de passe quand demandé"
+    echo ""
+    
+    # Utilisation de script expect pour automatiser l'interaction
+    arch-chroot /mnt /bin/bash -c "passwd" || {
+        log "Première tentative échouée, nouvelle tentative..."
+        arch-chroot /mnt /bin/bash -c "passwd"
+    }
+    
+    log_success "Mot de passe root configuré"
+}
+
+
+# FONCTION CORRIGÉE : Configuration utilisateur
+setup_user() {
+    log "=== CONFIGURATION UTILISATEUR ==="
+    
+    cat > /mnt/root/user_config.sh << USER_SCRIPT
+#!/bin/bash
+
+# Création utilisateur
+useradd -m -g users -G wheel,storage,power,audio $USERNAME
+
+# Configuration sudo
+sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
+
+USER_SCRIPT
+    
+    chmod +x /mnt/root/user_config.sh
+    arch-chroot /mnt /root/user_config.sh || error_exit "Échec création utilisateur"
+    
+    log "Utilisateur $USERNAME créé"
+}
+
+setup_user_password() {
+    log "=== CONFIGURATION MOT DE PASSE UTILISATEUR ==="
+    
+    echo ""
+    echo "=============================================================="
+    echo "      CONFIGURATION DU MOT DE PASSE UTILISATEUR $USERNAME    "
+    echo "=============================================================="
+    echo "Vous allez maintenant définir le mot de passe pour $USERNAME"
+    echo "Tapez votre mot de passe quand demandé"
+    echo ""
+    
+    # Configuration du mot de passe utilisateur
+    arch-chroot /mnt /bin/bash -c "passwd $USERNAME" || {
+        log "Première tentative échouée, nouvelle tentative..."
+        arch-chroot /mnt /bin/bash -c "passwd $USERNAME"
+    }
+    
+    log_success "Mot de passe utilisateur configuré"
+}
+
+configure_system() {
+    log "=== CONFIGURATION SYSTÈME ==="
+    
+    local boot_mode="$BOOT_MODE"
+    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
+    
+    # Copie du script pour continuer en chroot
+    cp "$0" /mnt/root/ 2>/dev/null || true
+    cp "$LOG_FILE" /mnt/root/ 2>/dev/null || true
+    echo "$boot_mode" > /mnt/root/boot_mode
+    
+    # Configuration en chroot
+    cat > /mnt/root/chroot_config.sh << 'CHROOT_SCRIPT'
+#!/bin/bash
+
+# Lecture du mode de boot
+BOOT_MODE=$(cat /root/boot_mode 2>/dev/null || echo "uefi")
+
+# Configuration locale
+echo "fr_FR.UTF-8 UTF-8" >> /etc/locale.gen
+locale-gen
+
+echo "LANG=fr_FR.UTF-8" > /etc/locale.conf
+echo "LANGUAGE=fr_FR" >> /etc/locale.conf
+echo "LC_ALL=C" >> /etc/locale.conf
+
+echo "KEYMAP=fr" > /etc/vconsole.conf
+
+# Configuration timezone France
+ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime
+hwclock --systohc
+
+# Configuration hostname
+echo "$HOSTNAME" > /etc/hostname
+
+# Configuration /etc/hosts
+cat > /etc/hosts << EOF
+127.0.0.1	localhost.localdomain	localhost
+::1		localhost.localdomain	localhost
+127.0.0.1	$HOSTNAME.localdomain	$HOSTNAME
+EOF
+
+# Installation des services réseau
+pacman -S --noconfirm dhcpcd networkmanager network-manager-applet
+systemctl enable sshd
+systemctl enable dhcpcd
+systemctl enable NetworkManager
+
+# Installation et configuration GRUB selon le mode de boot
+pacman -S --noconfirm grub
+
+if [[ $BOOT_MODE == "uefi" ]]; then
+    echo "Configuration GRUB pour UEFI..."
+    pacman -S --noconfirm efibootmgr
+    grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB || {
+        echo "Erreur: Échec installation GRUB UEFI"
+        exit 1
+    }
+else
+    echo "Configuration GRUB pour BIOS..."
+    grub-install --target=i386-pc $DISK || {
+        echo "Erreur: Échec installation GRUB BIOS"
+        exit 1
+    }
+fi
+
+grub-mkconfig -o /boot/grub/grub.cfg || {
+    echo "Erreur: Échec génération config GRUB"
+    exit 1
+}
+
+# Installation des outils supplémentaires
+pacman -S --noconfirm iw wpa_supplicant dialog git reflector lshw unzip htop
+pacman -S --noconfirm wget pulseaudio alsa-utils alsa-plugins pavucontrol xdg-user-dirs
+
+CHROOT_SCRIPT
+    
+    chmod +x /mnt/root/chroot_config.sh
+    arch-chroot /mnt /root/chroot_config.sh || error_exit "Échec configuration système"
+    
+    log "Configuration système terminée"
+}
+
+
 # Fonction principale
-# Fonction principale - CORRIGÉE
 main() {
     log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
-    log "Script version: 2025.1-corrected-fixed"
 
-    # Gestion des signaux pour nettoyage en cas d'interruption
-    trap cleanup EXIT INT TERM
+    # Étapes préparatoires
+    check_prerequisites          # Vérification internet, disque, etc.
+    partition_menu              # Affichage du menu et gestion du choix utilisateur
+    prepare_disk_for_format     # Préparation du disque pour formatage
+    format_partitions           # Formatage des partitions
+    mount_partitions            # Montage des partitions
+    
+    # Installation et configuration
+    install_base                # Installation du système de base
+    configure_system            # Configuration des paramètres système (corrigée)
+    
+    # SÉPARATION : Configuration des mots de passe manuellement
+    setup_root_password         # Configuration manuelle mot de passe root
+    
+    install_gui                 # Installation de l'environnement graphique
+    setup_user                  # Création du compte utilisateur (corrigée)
+    
+    # SÉPARATION : Configuration mot de passe utilisateur manuellement  
+    setup_user_password         # Configuration manuelle mot de passe utilisateur
+    
+    create_post_install_script  # Création du script post-installation
 
-    # Vérification environnement
-    if [[ ! -d /sys/firmware/efi ]] && [[ ! -d /sys/firmware/efi/efivars ]]; then
-        log "Système BIOS détecté"
-    else
-        log "Système UEFI détecté"
-    fi
-
-    # Exécution des fonctions dans l'ordre
-    check_prerequisites          # Vérification + détection automatique
-    partition_menu              # Menu de partitionnement
-    prepare_disk_for_format     # Préparation du disque
-    format_partitions           # Formatage avec gestion d'erreur
-    mount_partitions            # Montage avec vérifications
-    install_base                # Installation de base robuste
-    configure_system            # Configuration système complète
-    install_gui                 # Installation environnement graphique
-    setup_user                  # Configuration utilisateur
-    create_post_install_script  # Script post-installation
-
-    # Message final
-    log_success "=== INSTALLATION TERMINEE AVEC SUCCES ==="
+    # Message final et nettoyage
+    log "=== INSTALLATION TERMINEE ==="
     echo ""
     echo "=============================================================="
     echo "                  INSTALLATION TERMINEE                      "
     echo "=============================================================="
     echo "  Mode de boot: $BOOT_MODE"
-    echo "  Disque utilisé: $DISK"
-    echo ""
-    echo "  INFORMATIONS DE CONNEXION:"
-    echo "  Utilisateur: $USERNAME / Mot de passe: $USERNAME"
-    echo "  Root: root / Mot de passe: root"
-    echo ""
-    echo "  ÉTAPES SUIVANTES:"
-    echo "  1. Redémarrez le système: reboot"
-    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME"
-    echo "  3. Changez les mots de passe par défaut"
-    echo "  4. Exécutez le script post-installation: ./post_install.sh"
-    echo ""
-    echo "  Log sauvegardé dans: $LOG_FILE"
+    echo "  Utilisateur créé: $USERNAME"
+    echo "  Hostname: $HOSTNAME"
+    echo "  1. Redémarrez le système: reboot                           "
+    echo "  2. Connectez-vous avec l'utilisateur: $USERNAME           "
+    echo "  3. Exécutez le script post-installation:                   "
+    echo "     ./post_install.sh                                       "
+    echo "                                                              "
+    echo "  Log sauvegardé dans: /root/arch_install.log                 "
     echo "=============================================================="
     echo ""
 
     read -p "Voulez-vous redémarrer maintenant? [y/N]: " reboot_confirm
     if [[ $reboot_confirm == [yY] ]]; then
-        log "Redémarrage demandé par l'utilisateur"
+        cleanup
         reboot
     else
+        cleanup
         log "Redémarrage annulé. N'oubliez pas de redémarrer manuellement."
     fi
 }
