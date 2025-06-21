@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/tmp/arch_install.log"
 DISK="/dev/sda"
 USERNAME="cyber"
-HOSTNAME="cyber"
+HOSTNAME="archlinux"
 BOOT_MODE=""
 
 # Fonctions de logging
