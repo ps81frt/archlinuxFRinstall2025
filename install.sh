@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.3-corrected
+# Version: 2025.4-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -194,94 +194,72 @@ partition_bios() {
     
     log "Partitionnement BIOS/MBR..."
     
-    # Nettoyage du disque
     wipefs -af "$disk" || true
     dd if=/dev/zero of="$disk" bs=512 count=1 2>/dev/null || true
-    
-    # Attendre
     sleep 2
     
-    # Création de la table de partition MBR avec fdisk - CORRIGÉ
     if [[ $has_separate_home == false ]]; then
-        # Configuration sans partition home séparée (4 partitions primaires)
         {
-            echo o      # Nouvelle table de partition DOS
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 1      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$boot_size  # Dernier secteur
-            echo a      # Activer le flag bootable
-            echo 1      # Sur la partition 1
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 2      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$swap_size  # Dernier secteur
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 3      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo +$root_size  # Dernier secteur
-            echo n      # Nouvelle partition
-            echo p      # Primaire
-            echo 4      # Numéro de partition
-            echo        # Premier secteur (défaut)
-            echo        # Dernier secteur (reste du disque)
-            echo t      # Changer type de partition
-            echo 2      # Partition 2 (swap)
-            echo 82     # Type Linux swap
-            echo w      # Écrire les changements
-        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
-    else
-        # Configuration avec partition home (utilisation de partitions étendues)
-        {
-            echo o      # Nouvelle table de partition DOS
-            echo n      # Nouvelle partition primaire 1 (boot)
+            echo o      # Nouvelle table DOS
+            echo n      # Partition 1
             echo p
             echo 1
             echo
             echo +$boot_size
-            echo a      # Activer le flag bootable
+            echo a      # Flag bootable
             echo 1
-
-            echo n      # Nouvelle partition primaire 2 (swap)
+            echo n      # Partition 2
             echo p
             echo 2
             echo
             echo +$swap_size
-
-            echo n      # Nouvelle partition primaire 3 (root)
+            echo n      # Partition 3
             echo p
             echo 3
             echo
             echo +$root_size
-
-            echo n      # Nouvelle partition étendue 4
+            echo n      # Partition 4
+            echo p
+            echo 4
+            echo
+            echo        # Fin du disque
+            echo t      # Changer type swap
+            echo 2
+            echo 82
+            echo w
+        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
+    else
+        {
+            echo o      # Nouvelle table DOS
+            echo n      # Partition 1 (boot)
+            echo p
+            echo 1
+            echo
+            echo +$boot_size
+            echo a      # Flag bootable
+            echo 1
+            echo n      # Partition 2 (swap)
+            echo p
+            echo 2
+            echo
+            echo +$swap_size
+            echo n      # Partition 3 (root)
+            echo p
+            echo 3
+            echo
+            echo +$root_size
+            echo n      # Partition 4 (étendue)
             echo e
             echo 4
             echo
+            echo        # Fin étendue (reste disque)
+            echo n      # Partition logique 5 (home)
             echo
-
-            echo n      # Nouvelle partition logique 5 (home)
-            echo        # Laisser vide pour numéro automatique
-            echo        # Premier secteur par défaut
             echo +$home_size
-
-            echo n      # Nouvelle partition logique 6 (data)
-            echo        # Laisser vide pour numéro automatique
-            echo        # Premier secteur par défaut
-            echo        # Dernier secteur par défaut (reste)
-
-            echo t      # Changer type de partition (swap)
-            echo 2
-            echo 82
-
-            echo w      # Écrire les changements
+            echo w
         } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
     fi
     
-    # Attendre que le kernel reconnaisse les nouvelles partitions
     sleep 3
     partprobe "$disk"
     sleep 2
@@ -845,40 +823,57 @@ mount_partitions() {
     swapon "${DISK}2" || error_exit "Échec activation swap"
 
     # Création des points de montage
-    mkdir -p /mnt/{boot,data}
+    mkdir -p /mnt/boot /mnt/data
 
     # Montage boot
     log "Montage boot ${DISK}1 sur /mnt/boot..."
     mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
 
-    # Montage home et data selon configuration
     if [[ $has_separate_home == "true" ]]; then
         mkdir -p /mnt/home
 
         if [[ $boot_mode == "bios" ]]; then
-            # BIOS avec home séparé: partitions logiques
-            log "Montage home ${DISK}5 sur /mnt/home..."
-            mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
+            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}5)"; then
+                log "Montage home ${DISK}5 sur /mnt/home..."
+                mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
+            else
+                log "Partition home ${DISK}5 introuvable, montage ignoré"
+            fi
 
-            log "Montage data ${DISK}6 sur /mnt/data..."
-            mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
+            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}6)"; then
+                log "Montage data ${DISK}6 sur /mnt/data..."
+                mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
+            else
+                log "Partition data ${DISK}6 introuvable, montage ignoré"
+            fi
         else
-            # UEFI avec home séparé
-            log "Montage home ${DISK}4 sur /mnt/home..."
-            mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
+            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}4)"; then
+                log "Montage home ${DISK}4 sur /mnt/home..."
+                mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
+            else
+                log "Partition home ${DISK}4 introuvable, montage ignoré"
+            fi
 
-            log "Montage data ${DISK}5 sur /mnt/data..."
-            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
+            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}5)"; then
+                log "Montage data ${DISK}5 sur /mnt/data..."
+                mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
+            else
+                log "Partition data ${DISK}5 introuvable, montage ignoré"
+            fi
         fi
     else
-        # Sans home séparée
-        log "Montage data ${DISK}4 sur /mnt/data..."
-        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+        if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}4)"; then
+            log "Montage data ${DISK}4 sur /mnt/data..."
+            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+        else
+            log "Partition data ${DISK}4 introuvable, montage ignoré"
+        fi
     fi
 
     log "Montage terminé"
     lsblk
 }
+
 
 # Installation de base
 install_base() {
