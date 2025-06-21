@@ -470,6 +470,24 @@ detect_boot_mode() {
     fi
 }
 
+# ¨Preparations des partitions
+prepare_disk_for_format() {
+    log "Préparation du disque pour formatage..."
+
+    # Deactivate swap on any partitions of the disk
+    for swapdev in $(swapon --show=NAME --noheadings | grep "^${DISK}"); do
+        log "Désactivation du swap sur $swapdev"
+        swapoff "$swapdev" || error_exit "Échec désactivation swap"
+    done
+
+    # Unmount all mounted partitions on the disk
+    for part in $(lsblk -ln -o NAME,MOUNTPOINT | grep "^$(basename $DISK)" | awk '$2!="" {print $1}'); do
+        log "Démontage de /dev/$part"
+        umount "/dev/$part" || error_exit "Échec démontage /dev/$part"
+    done
+
+    log "Disque prêt pour formatage"
+}
 # Formatage des partitions
 format_partitions() {
     log "=== FORMATAGE DES PARTITIONS ==="
@@ -853,6 +871,7 @@ main() {
 
     check_prerequisites
     partition_menu
+    prepare_disk_for_format
     format_partitions
     mount_partitions
     install_base
