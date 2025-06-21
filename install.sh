@@ -593,7 +593,7 @@ configure_system() {
     echo "$boot_mode" > /mnt/root/boot_mode
     
     # Configuration en chroot
-    arch-chroot /mnt /bin/zsh << CHROOT_EOF
+    arch-chroot /mnt /bin/bash << CHROOT_EOF
     
     # Lecture du mode de boot
     BOOT_MODE=\$(cat /root/boot_mode 2>/dev/null || echo "uefi")
@@ -659,7 +659,7 @@ CHROOT_EOF
 install_gui() {
     log "=== INSTALLATION ENVIRONNEMENT GRAPHIQUE ==="
     
-    arch-chroot /mnt /bin/zsh << 'CHROOT_EOF'
+    arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
     
     # Installation serveur X
     pacman -S --noconfirm xorg-server xorg-apps xorg-xinit
