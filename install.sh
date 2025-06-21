@@ -1515,7 +1515,7 @@ main() {
     log "=== DÉBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
 
-    # Étapes principales
+    # Étapes de base de l'installation
     check_prerequisites
     partition_menu
     prepare_disk_for_format
@@ -1539,31 +1539,43 @@ main() {
         exit 1
     fi
 
-    log "Création du script setup_user.sh dans le chroot..."
+    log "Création des fichiers pour le setup utilisateur dans le chroot..."
 
+    # Écrire le mot de passe dans un fichier temporaire sur la partition montée
+    echo "$PASSWORD" > /mnt/root/.user_passwd
+    chmod 600 /mnt/root/.user_passwd
+
+    # Créer le script dans le chroot qui lira ce fichier pour chpasswd
     cat <<'EOF' > /mnt/root/setup_user.sh
 #!/bin/bash
 set -e
 
 USERNAME="$1"
-PASSWORD="$2"
+
+# Lecture du mot de passe depuis le fichier temporaire
+PASSWORD=$(cat /root/.user_passwd)
 
 useradd -m -G wheel "$USERNAME"
 echo "$USERNAME:$PASSWORD" | chpasswd
 
 sed -i '/^# %wheel ALL=(ALL) ALL/s/^# //' /etc/sudoers
+
+# Supprimer le fichier temporaire après usage
+rm -f /root/.user_passwd
 EOF
 
     chmod +x /mnt/root/setup_user.sh
 
     log "Exécution du script utilisateur dans le chroot..."
-    arch-chroot /mnt /root/setup_user.sh "$USERNAME" "$PASSWORD" || error_exit "Échec de la création de l'utilisateur"
+    arch-chroot /mnt /root/setup_user.sh "$USERNAME" || error_exit "Échec de la création de l'utilisateur"
 
-    log "Nettoyage du script temporaire..."
-    rm /mnt/root/setup_user.sh
+    log "Nettoyage des fichiers temporaires..."
+    rm -f /mnt/root/setup_user.sh /mnt/root/.user_passwd
 
+    # Création script post-install
     create_post_install_script
 
+    # Message final
     log "=== INSTALLATION TERMINÉE ==="
     echo ""
     echo "=============================================================="
@@ -1580,7 +1592,7 @@ EOF
     echo ""
 
     read -p "Voulez-vous redémarrer maintenant? [y/N]: " reboot_confirm
-    if [[ $reboot_confirm == [yY] ]]; then
+    if [[ $reboot_confirm =~ ^[yY]$ ]]; then
         cleanup
         reboot
     else
@@ -1588,6 +1600,7 @@ EOF
         log "Redémarrage annulé. N'oubliez pas de redémarrer manuellement."
     fi
 }
+
 
 # Point d'entrée du script, compatible Bash et Zsh
 if [[ -n "$ZSH_VERSION" ]]; then
