@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.20-corrected
+# Version: 2025.22-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -152,118 +152,95 @@ auto_partition() {
 
 # Partitionnement UEFI (GPT) - CORRIGÉ
 partition_uefi() {
-    local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
-    
-    log "Partitionnement UEFI/GPT..."
-    
-    # Nettoyage du disque
-    sgdisk --zap-all "$disk" || error_exit "Échec du nettoyage du disque"
-    
-    # Attendre que les changements soient pris en compte
-    sleep 2
-    
-    # Création des partitions avec sgdisk
-    if [[ $has_separate_home == false ]]; then
-        # Configuration sans partition home séparée
-        sgdisk --clear \
-               --new=1:0:+$boot_size --typecode=1:ef00 --change-name=1:'EFI System' \
-               --new=2:0:+$swap_size --typecode=2:8200 --change-name=2:'Linux swap' \
-               --new=3:0:+$root_size --typecode=3:8304 --change-name=3:'Linux root' \
-               --new=4:0:0 --typecode=4:8300 --change-name=4:'Linux data' \
-               "$disk" || error_exit "Échec de la création des partitions"
+    local disk=$1
+    local boot_size=$2
+    local swap_size=$3
+    local root_size=$4
+    local home_size=$5
+    local has_separate_home=$6
+
+    log "Partitionnement UEFI sur $disk"
+
+    # Nettoyage des partitions existantes
+    parted "$disk" --script mklabel gpt
+
+    # Crée EFI
+    parted "$disk" --script mkpart ESP fat32 1MiB "$boot_size"
+    parted "$disk" --script set 1 boot on
+    mkfs.fat -F32 "${disk}1"
+
+    # Crée swap
+    parted "$disk" --script mkpart primary linux-swap "$boot_size" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))"
+    mkswap "${disk}2"
+
+    # Crée root
+    parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))"
+    mkfs.ext4 "${disk}3"
+
+    if [[ $has_separate_home == true ]]; then
+        # Crée home
+        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))"
+        mkfs.ext4 "${disk}4"
+
+        # Crée data (reste)
+        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))" 100%
+        mkfs.ext4 "${disk}5"
     else
-        # Configuration complète avec partition home
-        sgdisk --clear \
-               --new=1:0:+$boot_size --typecode=1:ef00 --change-name=1:'EFI System' \
-               --new=2:0:+$swap_size --typecode=2:8200 --change-name=2:'Linux swap' \
-               --new=3:0:+$root_size --typecode=3:8304 --change-name=3:'Linux root' \
-               --new=4:0:+$home_size --typecode=4:8302 --change-name=4:'Linux home' \
-               --new=5:0:0 --typecode=5:8300 --change-name=5:'Linux data' \
-               "$disk" || error_exit "Échec de la création des partitions"
+        # Pas de home séparée: data = reste après root
+        parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" 100%
+        mkfs.ext4 "${disk}4"
     fi
-    
-    # Attendre que le kernel reconnaisse les nouvelles partitions
-    sleep 3
-    partprobe "$disk"
-    sleep 2
+
+    log "Partitionnement UEFI terminé"
 }
+
 
 # Partitionnement BIOS (MBR) - CORRIGÉ
 partition_bios() {
-    local disk=$1 boot_size=$2 swap_size=$3 root_size=$4 home_size=$5 has_separate_home=$6
-    
-    log "Partitionnement BIOS/MBR..."
-    
-    wipefs -af "$disk" || true
-    dd if=/dev/zero of="$disk" bs=512 count=1 2>/dev/null || true
-    sleep 2
-    
-    if [[ $has_separate_home == false ]]; then
-        {
-            echo o      # Nouvelle table DOS
-            echo n      # Partition 1
-            echo p
-            echo 1
-            echo
-            echo +$boot_size
-            echo a      # Flag bootable
-            echo 1
-            echo n      # Partition 2
-            echo p
-            echo 2
-            echo
-            echo +$swap_size
-            echo n      # Partition 3
-            echo p
-            echo 3
-            echo
-            echo +$root_size
-            echo n      # Partition 4
-            echo p
-            echo 4
-            echo
-            echo        # Fin du disque
-            echo t      # Changer type swap
-            echo 2
-            echo 82
-            echo w
-        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
+    local disk=$1
+    local boot_size=$2
+    local swap_size=$3
+    local root_size=$4
+    local home_size=$5
+    local has_separate_home=$6
+
+    log "Partitionnement BIOS sur $disk"
+
+    # Nettoyage des partitions existantes
+    parted "$disk" --script mklabel msdos
+
+    # Crée boot
+    parted "$disk" --script mkpart primary ext4 1MiB "$boot_size"
+    mkfs.ext4 "${disk}1"
+
+    # Crée swap
+    parted "$disk" --script mkpart primary linux-swap "$boot_size" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))"
+    mkswap "${disk}2"
+
+    # Crée root
+    parted "$disk" --script mkpart primary ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))"
+    mkfs.ext4 "${disk}3"
+
+    # Crée partition étendue pour home + data
+    parted "$disk" --script mkpart extended "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" 100%
+
+    if [[ $has_separate_home == true ]]; then
+        # home en logique sda5
+        parted "$disk" --script mkpart logical ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))"
+        mkfs.ext4 "${disk}5"
+
+        # data en logique sda6 (reste)
+        parted "$disk" --script mkpart logical ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) + $(numfmt --from=iec $home_size) ))" 100%
+        mkfs.ext4 "${disk}6"
     else
-        {
-            echo o      # Nouvelle table DOS
-            echo n      # Partition 1 (boot)
-            echo p
-            echo 1
-            echo
-            echo +$boot_size
-            echo a      # Flag bootable
-            echo 1
-            echo n      # Partition 2 (swap)
-            echo p
-            echo 2
-            echo
-            echo +$swap_size
-            echo n      # Partition 3 (root)
-            echo p
-            echo 3
-            echo
-            echo +$root_size
-            echo n      # Partition 4 (étendue)
-            echo e
-            echo 4
-            echo
-            echo        # Fin étendue (reste disque)
-            echo n      # Partition logique 5 (home)
-            echo
-            echo +$home_size
-            echo w
-        } | fdisk "$disk" || error_exit "Échec du partitionnement BIOS"
+        # data en logique sda5 (reste)
+        parted "$disk" --script mkpart logical ext4 "$(( $(numfmt --from=iec $boot_size) + $(numfmt --from=iec $swap_size) + $(numfmt --from=iec $root_size) ))" 100%
+        mkfs.ext4 "${disk}5"
     fi
-    
-    sleep 3
-    partprobe "$disk"
-    sleep 2
+
+    log "Partitionnement BIOS terminé"
 }
+
 
 
 # Fonction de partitionnement manuel - CORRIGÉE
@@ -829,58 +806,44 @@ format_partitions() {
 mount_partitions() {
     log "=== MONTAGE DES PARTITIONS ==="
 
-    local has_separate_home="true"
-    local boot_mode="$BOOT_MODE"
+    local has_separate_home=$(cat /tmp/has_separate_home)
+    local boot_mode=$(cat /tmp/boot_mode)
 
-    [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
-    [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
-
-    log "Mode de boot : $boot_mode"
-    log "Partition /home séparée : $has_separate_home"
-
-    # Monter root
-    log "Montage root ${DISK}3 sur /mnt..."
+    # Monte root
     mount "${DISK}3" /mnt || error_exit "Échec montage root"
 
-    # Activer swap
-    log "Activation swap ${DISK}2..."
+    # Active swap
     swapon "${DISK}2" || error_exit "Échec activation swap"
 
-    # Création de tous les points de montage nécessaires AVANT montage
+    # Création des points de montage
     mkdir -p /mnt/boot
-    mkdir -p /mnt/home
     mkdir -p /mnt/data
 
-    # Montage boot
-    log "Montage boot ${DISK}1 sur /mnt/boot..."
+    # Monte boot
     mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
 
-    # Montage home et data selon configuration et mode boot
+    # Monte home et data selon le mode
     if [[ "$has_separate_home" == "true" ]]; then
+        mkdir -p /mnt/home
         if [[ "$boot_mode" == "bios" ]]; then
-            # BIOS avec home séparé: partitions logiques
-            log "Montage home ${DISK}5 sur /mnt/home..."
             mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
-
-            log "Montage data ${DISK}6 sur /mnt/data..."
             mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
         else
-            # UEFI avec home séparé
-            log "Montage home ${DISK}4 sur /mnt/home..."
             mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
-
-            log "Montage data ${DISK}5 sur /mnt/data..."
             mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
         fi
     else
-        # Sans home séparée
-        log "Montage data ${DISK}4 sur /mnt/data..."
-        mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+        if [[ "$boot_mode" == "bios" ]]; then
+            mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
+        else
+            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
+        fi
     fi
 
-    log "Montage terminé."
+    log "Montage terminé"
     lsblk
 }
+
 
 
 
