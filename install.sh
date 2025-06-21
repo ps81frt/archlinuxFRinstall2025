@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.2-corrected
+# Version: 2025.1-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -730,67 +730,97 @@ prepare_disk_for_format() {
 
 # Formatage des partitions - CORRIGÉ
 format_partitions() {
-    log "=== FORMATAGE DES PARTITIONS ==="
+    log "=== FORMATAGE & MONTAGE DES PARTITIONS ==="
 
-    local has_separate_home="true"
-    local boot_mode="$BOOT_MODE"
-
-    # Lecture config temporaire si disponible
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
-    log "Mode de boot : $boot_mode"
-    log "Partition /home séparée : $has_separate_home"
+    log "Mode boot: $boot_mode, home séparée: $has_separate_home"
 
-    # Attendre que les partitions soient reconnues
-    sleep 2
-
-    # Formatage partition de démarrage selon mode
+    # EFI ou /boot (sda1)
     if [[ $boot_mode == "uefi" ]]; then
-        log "Formatage de la partition EFI ${DISK}1..."
-        mkfs.fat -F32 "${DISK}1" || error_exit "Échec formatage EFI"
+        if [[ -b ${DISK}1 ]]; then
+            log "Formatage EFI ${DISK}1 en FAT32"
+            mkfs.fat -F32 "${DISK}1" || error_exit "Échec formatage EFI"
+            mount "${DISK}1" /mnt/boot
+        else
+            log_warning "${DISK}1 non existante — EFI non formatée/montee"
+        fi
     else
-        log "Formatage de la partition /boot ${DISK}1..."
-        mkfs.ext4 -F "${DISK}1" || error_exit "Échec formatage /boot"
+        if [[ -b ${DISK}1 ]]; then
+            log "Formatage /boot ${DISK}1 en ext4"
+            mkfs.ext4 -F "${DISK}1" || error_exit "Échec formatage /boot"
+            mount "${DISK}1" /mnt/boot
+        else
+            log_warning "${DISK}1 non existante — /boot non formaté/monté"
+        fi
     fi
 
-    # Swap commun
-    log "Configuration du swap ${DISK}2..."
-    mkswap "${DISK}2" || error_exit "Échec configuration swap"
+    # Swap (sda2)
+    if [[ -b ${DISK}2 ]]; then
+        log "Activation swap ${DISK}2"
+        mkswap "${DISK}2" || error_exit "Échec swap"
+        swapon "${DISK}2"
+    else
+        log_warning "${DISK}2 non trouvée — swap ignoré"
+    fi
 
-    # Root commun
-    log "Formatage de la partition root ${DISK}3..."
-    mkfs.ext4 -F "${DISK}3" || error_exit "Échec formatage root"
+    # Root (sda3)
+    if [[ -b ${DISK}3 ]]; then
+        log "Formatage root ${DISK}3"
+        mkfs.ext4 -F "${DISK}3" || error_exit "Échec root"
+        mount "${DISK}3" /mnt
+    else
+        error_exit "Partition root ${DISK}3 est obligatoire" 
+    fi
 
-    # Home et data selon mode et séparé ou non
+    # Home / Data
     if [[ $has_separate_home == "true" ]]; then
         if [[ $boot_mode == "bios" ]]; then
-            # En BIOS avec home séparé: partitions logiques 5 et 6
-            log "Formatage home ${DISK}5..."
-            mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage home"
-
-            log "Formatage data ${DISK}6..."
-            mkfs.ext4 -F "${DISK}6" || error_exit "Échec formatage data"
+            # BIOS + home séparé: loisirs sda5 et sda6
+            if [[ -b ${DISK}5 ]]; then
+                log "Formatage home ${DISK}5"
+                mkfs.ext4 -F "${DISK}5" || error_exit "Échec home"
+                mount "${DISK}5" /mnt/home
+            else
+                log_warning "Partition home ${DISK}5 non trouvée"
+            fi
+            if [[ -b ${DISK}6 ]]; then
+                log "Formatage data ${DISK}6"
+                mkfs.ext4 -F "${DISK}6" || error_exit "Échec data"
+                mount "${DISK}6" /mnt/data || log_warning "Montage data ${DISK}6 échoué"
+            else
+                log_warning "Partition data ${DISK}6 non trouvée"
+            fi
         else
-            # En UEFI avec home séparé: partitions 4 et 5
-            log "Formatage home ${DISK}4..."
-            mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage home"
-
-            log "Formatage data ${DISK}5..."
-            mkfs.ext4 -F "${DISK}5" || error_exit "Échec formatage data"
+            # UEFI + home séparé: sda4 et sda5
+            if [[ -b ${DISK}4 ]]; then
+                log "Formatage home ${DISK}4"
+                mkfs.ext4 -F "${DISK}4" || error_exit "Échec home"
+                mount "${DISK}4" /mnt/home
+            else
+                log_warning "Partition home ${DISK}4 non trouvée"
+            fi
+            if [[ -b ${DISK}5 ]]; then
+                log "Formatage data ${DISK}5"
+                mkfs.ext4 -F "${DISK}5" || error_exit "Échec data"
+                mount "${DISK}5" /mnt/data || log_warning "Montage data ${DISK}5 échoué"
+            else
+                log_warning "Partition data ${DISK}5 non trouvée"
+            fi
         fi
     else
-        # Sans home séparée
-        if [[ $boot_mode == "bios" ]]; then
-            log "Formatage data ${DISK}4 (pas de home séparé)..."
-            mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage data"
+        # Pas de home séparé: data = sda4
+        if [[ -b ${DISK}4 ]]; then
+            log "Formatage data ${DISK}4"
+            mkfs.ext4 -F "${DISK}4" || error_exit "Échec data"
+            mount "${DISK}4" /mnt/data
         else
-            log "Formatage data ${DISK}4 (pas de home séparé)..."
-            mkfs.ext4 -F "${DISK}4" || error_exit "Échec formatage data"
+            log_warning "Partition data ${DISK}4 non trouvée"
         fi
     fi
 
-    log "Formatage terminé"
+    log_success "Formatage et montage terminés"
 }
 
 # Montage des partitions - CORRIGÉ
