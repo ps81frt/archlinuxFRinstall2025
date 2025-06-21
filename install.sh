@@ -999,8 +999,8 @@ REPAIR_MENU
     pacman -S --noconfirm wget pulseaudio alsa-utils alsa-plugins pavucontrol xdg-user-dirs
     
     # Configuration mot de passe root
-    echo "Configuration du mot de passe root:"
-    passwd
+    #echo "Configuration du mot de passe root:"
+    #passwd
     
 CHROOT_EOF
     
