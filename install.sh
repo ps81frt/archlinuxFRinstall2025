@@ -712,7 +712,7 @@ CHROOT_EOF
 setup_user() {
     log "=== CONFIGURATION UTILISATEUR ==="
     
-    arch-chroot /mnt /bin/zsh << CHROOT_EOF
+    arch-chroot /mnt /bin/bash << CHROOT_EOF
     
     # Création utilisateur
     useradd -m -g users -G wheel,storage,power,audio $USERNAME
@@ -746,7 +746,7 @@ create_post_install_script() {
     log "=== CREATION DU SCRIPT POST-INSTALLATION ==="
     
     cat > /mnt/home/$USERNAME/post_install.sh << 'POST_EOF'
-#!/bin/zsh
+#!/bin/bash
 
 echo "=== CONFIGURATION POST-INSTALLATION ==="
 
@@ -767,10 +767,10 @@ fi
 echo "Installation des paquets audio..."
 yay -S --noconfirm pa-applet-git
 
-# Configuration shell zsh
-echo "Configuration du shell zsh..."
-sudo pacman -S --noconfirm zsh
-chsh -s /bin/zsh
+# Configuration shell bash
+echo "Configuration du shell bash..."
+sudo pacman -S --noconfirm bash
+chsh -s /bin/bash
 
 # Configuration utilisateur
 echo "Configuration des dossiers utilisateur..."
