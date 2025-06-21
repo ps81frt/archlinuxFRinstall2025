@@ -152,33 +152,64 @@ mount_partitions() {
   local tmp_part=$5
   local data_part=$6
 
-  mount "$root_part" /mnt || error_exit "Erreur montage /"
+  echo "Montage de la racine : $root_part"
+  if [[ -b "$root_part" ]]; then
+    mount "$root_part" /mnt || error_exit "Erreur montage /"
+  else
+    error_exit "Partition racine $root_part introuvable ou invalide."
+  fi
 
-  [[ -n "$boot_part" ]] && {
-    mkdir -p /mnt/boot
-    mount "$boot_part" /mnt/boot || error_exit "Erreur montage /boot"
-  }
+  if [[ -n "$boot_part" ]]; then
+    if [[ -b "$boot_part" ]]; then
+      echo "Montage de /boot : $boot_part"
+      mkdir -p /mnt/boot
+      mount "$boot_part" /mnt/boot || error_exit "Erreur montage /boot"
+    else
+      echo "Attention : partition /boot $boot_part introuvable, montage ignoré."
+    fi
+  fi
 
-  [[ -n "$home_part" ]] && {
-    mkdir -p /mnt/home
-    mount "$home_part" /mnt/home || error_exit "Erreur montage /home"
-  }
+  if [[ -n "$home_part" ]]; then
+    if [[ -b "$home_part" ]]; then
+      echo "Montage de /home : $home_part"
+      mkdir -p /mnt/home
+      mount "$home_part" /mnt/home || error_exit "Erreur montage /home"
+    else
+      echo "Attention : partition /home $home_part introuvable, montage ignoré."
+    fi
+  fi
 
-  [[ -n "$var_part" ]] && {
-    mkdir -p /mnt/var
-    mount "$var_part" /mnt/var || error_exit "Erreur montage /var"
-  }
+  if [[ -n "$var_part" ]]; then
+    if [[ -b "$var_part" ]]; then
+      echo "Montage de /var : $var_part"
+      mkdir -p /mnt/var
+      mount "$var_part" /mnt/var || error_exit "Erreur montage /var"
+    else
+      echo "Attention : partition /var $var_part introuvable, montage ignoré."
+    fi
+  fi
 
-  [[ -n "$tmp_part" ]] && {
-    mkdir -p /mnt/tmp
-    mount "$tmp_part" /mnt/tmp || error_exit "Erreur montage /tmp"
-  }
+  if [[ -n "$tmp_part" ]]; then
+    if [[ -b "$tmp_part" ]]; then
+      echo "Montage de /tmp : $tmp_part"
+      mkdir -p /mnt/tmp
+      mount "$tmp_part" /mnt/tmp || error_exit "Erreur montage /tmp"
+    else
+      echo "Attention : partition /tmp $tmp_part introuvable, montage ignoré."
+    fi
+  fi
 
-  [[ -n "$data_part" ]] && {
-    mkdir -p /mnt/data
-    mount "$data_part" /mnt/data || error_exit "Erreur montage /data"
-  }
+  if [[ -n "$data_part" ]]; then
+    if [[ -b "$data_part" ]]; then
+      echo "Montage de /data : $data_part"
+      mkdir -p /mnt/data
+      mount "$data_part" /mnt/data || error_exit "Erreur montage /data"
+    else
+      echo "Attention : partition /data $data_part introuvable, montage ignoré."
+    fi
+  fi
 }
+
 
 # === Installation de base ===
 install_base() {
