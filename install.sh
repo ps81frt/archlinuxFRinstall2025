@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-
+# V1.2
 error_exit() {
   echo "Erreur: $1" >&2
   exit 1
@@ -57,11 +57,27 @@ confirm_partition_table() {
     --yesno "Voulez-vous effacer $disk et créer une table $mode ?" 8 60 || exit 1
 }
 
+
 partition_disk() {
-  local disk="$1" mode="$2"
-  wipefs -a "$disk"
-  [ "$mode" = "UEFI" ] && parted -s "$disk" mklabel gpt || parted -s "$disk" mklabel msdos
+  local disk="$1"
+  local mode="$2"
+
+  echo "Démontage des partitions sur $disk..."
+  for p in $(lsblk -lnpo NAME "$disk"); do
+    umount -R "$p" 2>/dev/null || true
+  done
+
+  echo "Nettoyage de $disk"
+  wipefs -a "$disk" || error_exit "wipefs a échoué."
+
+  echo "Création de la table $mode sur $disk"
+  if [ "$mode" = "UEFI" ]; then
+    parted -s "$disk" mklabel gpt
+  else
+    parted -s "$disk" mklabel msdos
+  fi
 }
+
 
 format_and_mount() {
   local boot="$1" root="$2" swap="$3"
