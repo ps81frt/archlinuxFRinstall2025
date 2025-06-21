@@ -617,7 +617,7 @@ configure_system() {
     cp "$LOG_FILE" /mnt/root/ 2>/dev/null || true
     echo "$boot_mode" > /mnt/root/boot_mode
     
-    # Configuration en chroot
+    # Configuration en chroot (sans passwd)
     arch-chroot /mnt /bin/bash << CHROOT_EOF
     
     # Lecture du mode de boot
@@ -680,11 +680,12 @@ EOF
     pacman -S --noconfirm iw wpa_supplicant dialog git reflector lshw unzip htop
     pacman -S --noconfirm wget pulseaudio alsa-utils alsa-plugins pavucontrol xdg-user-dirs
     
-    # Configuration mot de passe root
-    echo "Configuration du mot de passe root:"
-    passwd
-    
 CHROOT_EOF
+    
+    # Configuration mot de passe root INTERACTIVE
+    log "Configuration du mot de passe root:"
+    echo "Configuration du mot de passe root:"
+    arch-chroot /mnt passwd
     
     log "Configuration système terminée"
 }
@@ -741,22 +742,239 @@ CHROOT_EOF
     
     log "Installation GUI terminée"
 }
+# Installation manuelle de paquets supplémentaires
+install_additional_packages() {
+    log "=== INSTALLATION PAQUETS SUPPLEMENTAIRES ==="
+    
+    echo ""
+    echo "=============================================================="
+    echo "           INSTALLATION PAQUETS SUPPLEMENTAIRES              "
+    echo "=============================================================="
+    echo ""
+    read -p "Voulez-vous installer des paquets supplémentaires? [y/N]: " install_extra
+    
+    if [[ $install_extra == [yY] ]]; then
+        echo ""
+        echo "Exemples de paquets populaires:"
+        echo "- neofetch (info système)"
+        echo "- discord (chat)"
+        echo "- gimp (éditeur d'image)"
+        echo "- libreoffice-fresh (suite bureautique)"
+        echo "- code (Visual Studio Code)"
+        echo "- docker (conteneurs)"
+        echo "- steam (jeux)"
+        echo "- obs-studio (streaming)"
+        echo "- thunderbird (email)"
+        echo "- telegram-desktop (messagerie)"
+        echo ""
+        
+        while true; do
+            echo "Entrez les noms des paquets à installer (séparés par des espaces):"
+            echo "Ou tapez 'done' pour terminer, 'skip' pour annuler:"
+            read -p "> " packages
+            
+            case $packages in
+                "done"|"DONE")
+                    log "Installation des paquets supplémentaires terminée"
+                    break
+                    ;;
+                "skip"|"SKIP")
+                    log "Installation des paquets supplémentaires annulée"
+                    break
+                    ;;
+                "")
+                    echo "Aucun paquet spécifié. Tapez 'done' pour terminer."
+                    continue
+                    ;;
+                *)
+                    log "Installation des paquets: $packages"
+                    echo "Installation en cours..."
+                    
+                    # Installation des paquets
+                    arch-chroot /mnt /bin/bash << CHROOT_EOF
+                    pacman -S --noconfirm $packages || {
+                        echo "Erreur lors de l'installation de certains paquets"
+                        echo "Vérifiez que les noms des paquets sont corrects"
+                    }
+CHROOT_EOF
+                    
+                    echo "Installation terminée pour: $packages"
+                    echo ""
+                    echo "Voulez-vous installer d'autres paquets? (tapez 'done' pour terminer)"
+                    ;;
+            esac
+        done
+    else
+        log "Installation des paquets supplémentaires ignorée"
+    fi
+}
 
-# Configuration utilisateur
+# Version alternative avec menu de sélection
+install_additional_packages_menu() {
+    log "=== INSTALLATION PAQUETS SUPPLEMENTAIRES ==="
+    
+    echo ""
+    echo "=============================================================="
+    echo "           INSTALLATION PAQUETS SUPPLEMENTAIRES              "
+    echo "=============================================================="
+    echo ""
+    read -p "Voulez-vous installer des paquets supplémentaires? [y/N]: " install_extra
+    
+    if [[ $install_extra == [yY] ]]; then
+        local selected_packages=""
+        
+        while true; do
+            echo ""
+            echo "Catégories disponibles:"
+            echo "1) Développement"
+            echo "2) Multimédia"
+            echo "3) Bureautique"
+            echo "4) Jeux"
+            echo "5) Internet/Communication"
+            echo "6) Système/Utilitaires"
+            echo "7) Installation manuelle (tapez les noms)"
+            echo "8) Terminer et installer les paquets sélectionnés"
+            echo "9) Annuler"
+            echo ""
+            echo "Paquets actuellement sélectionnés: $selected_packages"
+            echo ""
+            read -p "Votre choix [1-9]: " choice
+            
+            case $choice in
+                1)
+                    echo "Paquets de développement:"
+                    echo "1) code (VS Code)  2) git  3) docker  4) nodejs  5) python  6) vim"
+                    read -p "Sélectionnez (ex: 1 3 5): " dev_choice
+                    for num in $dev_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages code" ;;
+                            2) selected_packages="$selected_packages git" ;;
+                            3) selected_packages="$selected_packages docker" ;;
+                            4) selected_packages="$selected_packages nodejs npm" ;;
+                            5) selected_packages="$selected_packages python python-pip" ;;
+                            6) selected_packages="$selected_packages vim" ;;
+                        esac
+                    done
+                    ;;
+                2)
+                    echo "Paquets multimédia:"
+                    echo "1) gimp  2) obs-studio  3) audacity  4) blender  5) vlc"
+                    read -p "Sélectionnez (ex: 1 3): " media_choice
+                    for num in $media_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages gimp" ;;
+                            2) selected_packages="$selected_packages obs-studio" ;;
+                            3) selected_packages="$selected_packages audacity" ;;
+                            4) selected_packages="$selected_packages blender" ;;
+                            5) selected_packages="$selected_packages vlc" ;;
+                        esac
+                    done
+                    ;;
+                3)
+                    echo "Paquets bureautique:"
+                    echo "1) libreoffice-fresh  2) thunderbird  3) calibre"
+                    read -p "Sélectionnez (ex: 1 2): " office_choice
+                    for num in $office_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages libreoffice-fresh" ;;
+                            2) selected_packages="$selected_packages thunderbird" ;;
+                            3) selected_packages="$selected_packages calibre" ;;
+                        esac
+                    done
+                    ;;
+                4)
+                    echo "Paquets jeux:"
+                    echo "1) steam  2) lutris  3) wine"
+                    read -p "Sélectionnez (ex: 1): " games_choice
+                    for num in $games_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages steam" ;;
+                            2) selected_packages="$selected_packages lutris" ;;
+                            3) selected_packages="$selected_packages wine" ;;
+                        esac
+                    done
+                    ;;
+                5)
+                    echo "Paquets internet/communication:"
+                    echo "1) discord  2) telegram-desktop  3) firefox  4) chromium"
+                    read -p "Sélectionnez (ex: 1 2): " comm_choice
+                    for num in $comm_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages discord" ;;
+                            2) selected_packages="$selected_packages telegram-desktop" ;;
+                            3) selected_packages="$selected_packages firefox" ;;
+                            4) selected_packages="$selected_packages chromium" ;;
+                        esac
+                    done
+                    ;;
+                6)
+                    echo "Paquets système/utilitaires:"
+                    echo "1) neofetch  2) tree  3) zip unzip  4) htop  5) nano"
+                    read -p "Sélectionnez (ex: 1 3 4): " util_choice
+                    for num in $util_choice; do
+                        case $num in
+                            1) selected_packages="$selected_packages neofetch" ;;
+                            2) selected_packages="$selected_packages tree" ;;
+                            3) selected_packages="$selected_packages zip unzip" ;;
+                            4) selected_packages="$selected_packages htop" ;;
+                            5) selected_packages="$selected_packages nano" ;;
+                        esac
+                    done
+                    ;;
+                7)
+                    echo "Tapez les noms des paquets à ajouter (séparés par des espaces):"
+                    read -p "> " manual_packages
+                    selected_packages="$selected_packages $manual_packages"
+                    ;;
+                8)
+                    if [[ -n "$selected_packages" ]]; then
+                        log "Installation des paquets: $selected_packages"
+                        echo "Installation en cours..."
+                        
+                        arch-chroot /mnt /bin/bash << CHROOT_EOF
+                        pacman -S --noconfirm $selected_packages || {
+                            echo "Erreur lors de l'installation de certains paquets"
+                        }
+CHROOT_EOF
+                        
+                        log "Installation terminée"
+                    else
+                        log "Aucun paquet sélectionné"
+                    fi
+                    break
+                    ;;
+                9)
+                    log "Installation des paquets supplémentaires annulée"
+                    break
+                    ;;
+                *)
+                    echo "Choix invalide"
+                    ;;
+            esac
+        done
+    else
+        log "Installation des paquets supplémentaires ignorée"
+    fi
+}
+
 setup_user() {
     log "=== CONFIGURATION UTILISATEUR ==="
     
+    # Création utilisateur et configuration sudo (sans passwd)
     arch-chroot /mnt /bin/bash << CHROOT_EOF
     
     # Création utilisateur
     useradd -m -g users -G wheel,storage,power,audio $USERNAME
-    echo "Configuration du mot de passe pour $USERNAME:"
-    passwd $USERNAME
     
     # Configuration sudo
     sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
     
 CHROOT_EOF
+    
+    # Configuration mot de passe utilisateur INTERACTIVE
+    log "Configuration du mot de passe pour l'utilisateur $USERNAME:"
+    echo "Configuration du mot de passe pour l'utilisateur $USERNAME:"
+    arch-chroot /mnt passwd $USERNAME
     
     log "Configuration utilisateur terminée"
 }
@@ -852,6 +1070,8 @@ main() {
     install_base                # Installation du système de base
     configure_system            # Configuration des paramètres système
     install_gui                 # Installation de l'environnement graphique
+    install_additional_packages # Ajout paquets additionnels cli
+    install_additional_packages_menu  # Ajout paquets additionnels menu
     setup_user                  # Création du compte utilisateur
     create_post_install_script  # Création du script post-installation
 
