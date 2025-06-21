@@ -3,7 +3,7 @@
 # =============================================================================
 # ARCH LINUX FR INSTALL 2025 - UEFI/BIOS COMPATIBLE (CORRECTED)
 # =============================================================================
-# Version: 2025.4-corrected
+# Version: 2025.1-corrected
 # Auteur : itdevops
 # Libre de droit
 # Description: Script d'installation automatisée d'Arch Linux optimisé pour la France
@@ -418,10 +418,34 @@ partition_menu() {
             manual_partition "$DISK"
             ;;
         3)
-            log_info "Partitionnement ignoré"
-            echo "true" > /tmp/has_separate_home
+            log_info "Partitionnement ignoré. Veuillez indiquer les partitions existantes."
+
+            read -p "Partition boot (ex: /dev/sda1 ou /dev/nvme0n1p1) : " BOOT_PART
+            read -p "Partition swap (ex: /dev/sda2 ou /dev/nvme0n1p2) : " SWAP_PART
+            read -p "Partition root (ex: /dev/sda3 ou /dev/nvme0n1p3) : " ROOT_PART
+
+            read -p "Avez-vous une partition /home séparée ? (y/n) : " home_sep
+            if [[ $home_sep =~ ^[Yy]$ ]]; then
+                HAS_SEPARATE_HOME=true
+                read -p "Partition /home (ex: /dev/sda4 ou /dev/nvme0n1p4) : " HOME_PART
+                read -p "Partition /data (ex: /dev/sda5 ou /dev/nvme0n1p5) : " DATA_PART
+            else
+                HAS_SEPARATE_HOME=false
+                read -p "Partition /data (ex: /dev/sda4 ou /dev/nvme0n1p4) : " DATA_PART
+                HOME_PART=""
+            fi
+
+            echo "$HAS_SEPARATE_HOME" > /tmp/has_separate_home
             echo "$BOOT_MODE" > /tmp/boot_mode
-            ;;
+
+            echo "$BOOT_PART" > /tmp/boot_part
+            echo "$SWAP_PART" > /tmp/swap_part
+            echo "$ROOT_PART" > /tmp/root_part
+            echo "$HOME_PART" > /tmp/home_part
+            echo "$DATA_PART" > /tmp/data_part
+    ;;
+
+
         4)
             log_info "Mode réparation GRUB sélectionné"
             grub_repair_mode
@@ -811,68 +835,65 @@ mount_partitions() {
     [[ -f /tmp/has_separate_home ]] && has_separate_home=$(cat /tmp/has_separate_home)
     [[ -f /tmp/boot_mode ]] && boot_mode=$(cat /tmp/boot_mode)
 
+    # Récupérer les partitions si elles existent (pour option 3)
+    local boot_part="${DISK}1"
+    local swap_part="${DISK}2"
+    local root_part="${DISK}3"
+    local home_part=""
+    local data_part=""
+
+    if [[ -f /tmp/boot_part ]]; then
+        boot_part=$(cat /tmp/boot_part)
+    fi
+    if [[ -f /tmp/swap_part ]]; then
+        swap_part=$(cat /tmp/swap_part)
+    fi
+    if [[ -f /tmp/root_part ]]; then
+        root_part=$(cat /tmp/root_part)
+    fi
+    if [[ -f /tmp/home_part ]]; then
+        home_part=$(cat /tmp/home_part)
+    fi
+    if [[ -f /tmp/data_part ]]; then
+        data_part=$(cat /tmp/data_part)
+    fi
+
     log "Mode de boot : $boot_mode"
     log "Partition /home séparée : $has_separate_home"
 
     # Montage root en premier
-    log "Montage root ${DISK}3 sur /mnt..."
-    mount "${DISK}3" /mnt || error_exit "Échec montage root"
+    log "Montage root $root_part sur /mnt..."
+    mount "$root_part" /mnt || error_exit "Échec montage root"
 
     # Activation swap
-    log "Activation swap ${DISK}2..."
-    swapon "${DISK}2" || error_exit "Échec activation swap"
+    log "Activation swap $swap_part..."
+    swapon "$swap_part" || error_exit "Échec activation swap"
 
     # Création des points de montage
     mkdir -p /mnt/boot /mnt/data
 
     # Montage boot
-    log "Montage boot ${DISK}1 sur /mnt/boot..."
-    mount "${DISK}1" /mnt/boot || error_exit "Échec montage boot"
+    log "Montage boot $boot_part sur /mnt/boot..."
+    mount "$boot_part" /mnt/boot || error_exit "Échec montage boot"
 
     if [[ $has_separate_home == "true" ]]; then
         mkdir -p /mnt/home
 
-        if [[ $boot_mode == "bios" ]]; then
-            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}5)"; then
-                log "Montage home ${DISK}5 sur /mnt/home..."
-                mount "${DISK}5" /mnt/home || error_exit "Échec montage home"
-            else
-                log "Partition home ${DISK}5 introuvable, montage ignoré"
-            fi
+        log "Montage home $home_part sur /mnt/home..."
+        mount "$home_part" /mnt/home || error_exit "Échec montage home"
 
-            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}6)"; then
-                log "Montage data ${DISK}6 sur /mnt/data..."
-                mount "${DISK}6" /mnt/data || error_exit "Échec montage data"
-            else
-                log "Partition data ${DISK}6 introuvable, montage ignoré"
-            fi
-        else
-            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}4)"; then
-                log "Montage home ${DISK}4 sur /mnt/home..."
-                mount "${DISK}4" /mnt/home || error_exit "Échec montage home"
-            else
-                log "Partition home ${DISK}4 introuvable, montage ignoré"
-            fi
-
-            if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}5)"; then
-                log "Montage data ${DISK}5 sur /mnt/data..."
-                mount "${DISK}5" /mnt/data || error_exit "Échec montage data"
-            else
-                log "Partition data ${DISK}5 introuvable, montage ignoré"
-            fi
-        fi
+        log "Montage data $data_part sur /mnt/data..."
+        mount "$data_part" /mnt/data || error_exit "Échec montage data"
     else
-        if lsblk -no NAME "$DISK" | grep -q "$(basename ${DISK}4)"; then
-            log "Montage data ${DISK}4 sur /mnt/data..."
-            mount "${DISK}4" /mnt/data || error_exit "Échec montage data"
-        else
-            log "Partition data ${DISK}4 introuvable, montage ignoré"
-        fi
+        # Sans home séparée
+        log "Montage data $data_part sur /mnt/data..."
+        mount "$data_part" /mnt/data || error_exit "Échec montage data"
     fi
 
     log "Montage terminé"
     lsblk
 }
+
 
 
 # Installation de base
