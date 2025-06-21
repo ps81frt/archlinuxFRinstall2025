@@ -108,7 +108,7 @@ ping google.com
 
 ```zsh
 # Télécharger et lancer le script
-curl -L https://git.io/archfr2025 | bash
+curl -L https://raw.githubusercontent.com/ps81frt/archlinuxfr/refs/heads/main/install.sh | bash
 ```
 
 ### Étape 3 : Choix du partitionnement
