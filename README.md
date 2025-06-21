@@ -56,6 +56,8 @@ Script d'installation automatisée d'Arch Linux optimisé pour la France avec pa
 ```bash
 # 1. Télécharger le script
 curl -L https://raw.githubusercontent.com/ps81frt/archlinuxFRinstall2025/main/install.sh -o install.sh
+ou
+curl -L https://git.io/archfr2025 | bash
 
 # 2. Rendre exécutable
 chmod +x install.sh
