@@ -1601,7 +1601,6 @@ EOF
     fi
 }
 
-
 # Point d'entrée du script, compatible Bash et Zsh
 if [[ -n "$ZSH_VERSION" ]]; then
     # Zsh : on vérifie le contexte pour ne pas lancer si script est "sourcé"
