@@ -1502,29 +1502,64 @@ REPAIR_MENU
 
 # Fonction principale
 main() {
-    log "=== DEBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
+    log "=== DÉBUT DE L'INSTALLATION ARCH LINUX (UEFI/BIOS) ==="
     log "Fichier de log: $LOG_FILE"
 
-    # Ces fonctions s'exécutent dans l'ordre pour tout le monde :
-    check_prerequisites          # Vérification internet, disque, etc.
-    partition_menu              # Affichage du menu et gestion du choix utilisateur
-    prepare_disk_for_format     # Préparation du disque pour formatage
-    format_partitions           # Formatage des partitions
-    mount_partitions            # Montage des partitions
-    install_base                # Installation du système de base
-    #configure_system            # Configuration des paramètres système
-    configure_system_enhanced   # Configuration des paramètres système avancées
-    install_gui                 # Installation de l'environnement graphique
-    install_additional_packages # Ajout paquets additionnels cli
-    install_additional_packages_menu  # Ajout paquets additionnels menu
-    setup_user                  # Création du compte utilisateur
-    create_post_install_script  # Création du script post-installation
+    # Étapes de base de l'installation
+    check_prerequisites
+    partition_menu
+    prepare_disk_for_format
+    format_partitions
+    mount_partitions
+    install_base
+    configure_system_enhanced
+    install_gui
+    install_additional_packages
+    install_additional_packages_menu
 
-    # Message final et nettoyage
-    log "=== INSTALLATION TERMINEE ==="
+    # === Création utilisateur dans le chroot ===
+
+    # Demande interactive des identifiants utilisateur
+    read -p "Nom d'utilisateur : " USERNAME
+    read -sp "Entrez le mot de passe pour $USERNAME : " PASSWORD
+    echo
+    read -sp "Confirmez le mot de passe : " PASSWORD_CONFIRM
+    echo
+
+    if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
+        echo "❌ Les mots de passe ne correspondent pas."
+        exit 1
+    fi
+
+    log "Création du script setup_user.sh dans le chroot..."
+
+    # Création dynamique du script à exécuter dans le chroot
+    cat <<EOF > /mnt/root/setup_user.sh
+#!/bin/bash
+set -e
+
+useradd -m -G wheel "$USERNAME"
+echo "$USERNAME:$PASSWORD" | chpasswd
+
+sed -i '/^# %wheel ALL=(ALL) ALL/s/^# //' /etc/sudoers
+EOF
+
+    chmod +x /mnt/root/setup_user.sh
+
+    log "Exécution du script utilisateur dans le chroot..."
+    arch-chroot /mnt /root/setup_user.sh || error_exit "❌ Échec de la création de l'utilisateur"
+
+    log "Nettoyage du script temporaire..."
+    rm /mnt/root/setup_user.sh
+
+    # Création script post-install
+    create_post_install_script
+
+    # Message final
+    log "=== INSTALLATION TERMINÉE ==="
     echo ""
     echo "=============================================================="
-    echo "                  INSTALLATION TERMINEE                      "
+    echo "                  INSTALLATION TERMINÉE                      "
     echo "=============================================================="
     echo "  Mode de boot: $BOOT_MODE"
     echo "  1. Redémarrez le système: reboot                           "
