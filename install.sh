@@ -1259,7 +1259,7 @@ main() {
     mount_partitions            # Montage des partitions
     install_base                # Installation du système de base
     #configure_system            # Configuration des paramètres système
-    configure_system_enhanced() # Configuration des paramètres système avancées
+    configure_system_enhanced # Configuration des paramètres système avancées
     install_gui                 # Installation de l'environnement graphique
     install_additional_packages # Ajout paquets additionnels cli
     install_additional_packages_menu  # Ajout paquets additionnels menu
